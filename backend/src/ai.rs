@@ -15,6 +15,7 @@ pub struct AiConfig {
     pub provider: String, // "openrouter" | "openai-compat"
     pub model: String,
     pub base_url: String, // required for openai-compat; override for openrouter
+    pub embed_model: String, // embeddings model for manuscript RAG
     pub enabled: bool,    // auto-scan after NER finds new names
 }
 
@@ -24,6 +25,7 @@ impl Default for AiConfig {
             provider: "openrouter".into(),
             model: "openrouter/auto".into(),
             base_url: String::new(),
+            embed_model: String::new(),
             enabled: false,
         }
     }
@@ -45,6 +47,7 @@ pub fn load_config(root: &Path) -> AiConfig {
             provider: v["provider"].as_str().unwrap_or("openrouter").to_string(),
             model: v["model"].as_str().unwrap_or("openrouter/auto").to_string(),
             base_url: v["baseUrl"].as_str().unwrap_or("").to_string(),
+            embed_model: v["embedModel"].as_str().unwrap_or("").to_string(),
             enabled: v["enabled"].as_bool().unwrap_or(false),
         })
         .unwrap_or_default();
@@ -66,6 +69,7 @@ pub fn save_config(root: &Path, cfg: AiConfig) -> Result<()> {
             "provider": cfg.provider,
             "model": cfg.model,
             "baseUrl": cfg.base_url,
+            "embedModel": cfg.embed_model,
             "enabled": cfg.enabled,
         })
         .to_string(),
@@ -82,8 +86,12 @@ pub fn has_key() -> bool {
     STATE.read().unwrap().1.is_some()
 }
 
-fn key() -> Option<String> {
+pub(crate) fn api_key() -> Option<String> {
     STATE.read().unwrap().1.clone()
+}
+
+fn key() -> Option<String> {
+    api_key()
 }
 
 pub fn auto_scan_ready(root: &Path) -> bool {

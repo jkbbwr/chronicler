@@ -12,7 +12,9 @@ mod codex;
 mod compile;
 mod db;
 mod diagnostics;
+mod embed;
 mod ner;
+mod agents;
 mod rpc;
 mod stats;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
@@ -335,6 +337,17 @@ async fn main() -> anyhow::Result<()> {
                     if files.is_empty() {
                         return;
                     }
+                    // Keep the agent's manuscript index fresh: re-embed changed scenes, but
+                    // only once the writer has built an index with the
+                    // currently configured embedding model.
+                    if embed::stats(&root2).map(|(_, chunks)| chunks > 0).unwrap_or(false)
+                        && embed::index_is_current_model(&root2)
+                    {
+                        match embed::index_files(&root2, &files).await {
+                            Ok(n) => tracing::info!("agent index refreshed: {} passages", n),
+                            Err(e) => tracing::warn!("agent index refresh failed: {:#}", e),
+                        }
+                    }
                     let root3 = root2.clone();
                     let ner_files = files.clone();
                     let found = tokio::task::spawn_blocking(move || {
@@ -380,7 +393,7 @@ async fn main() -> anyhow::Result<()> {
         let root = root.clone();
 
         tasks.spawn(async move {
-            let response = handle_request_line(&root, &line).await;
+            let response = handle_request_line(&root, &line, tx.clone()).await;
             if let Some(resp) = response {
                 if let Ok(json_str) = serde_json::to_string(&resp) {
                     let _ = tx.send(json_str).await;
@@ -403,7 +416,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse> {
+async fn handle_request_line(
+    root: &Path,
+    line: &str,
+    tx: mpsc::Sender<String>,
+) -> Option<JsonRpcResponse> {
     if line.trim().is_empty() {
         return None;
     }
@@ -441,6 +458,44 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
         "codex/reindex" => codex_reindex(root).map_err(rpc_err),
         "index/rebuild" => index_rebuild(root).map_err(rpc_err),
+        "agents/chat" => {
+            let id = req.params["id"].as_str().unwrap_or("rig").to_string();
+            let messages = req.params["messages"].as_array().cloned().unwrap_or_default();
+            let attach: Vec<String> = req.params["attach"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if messages.is_empty() {
+                Err((-32000, "Missing param: messages".to_string()))
+            } else {
+                match agents::run_chat(
+                    root,
+                    tx.clone(),
+                    id,
+                    &messages,
+                    req.params["context"].as_str(),
+                    &attach,
+                )
+                .await
+                {
+                    Ok(text) => Ok(json!({ "text": text })),
+                    Err(e) => Err(rpc_err(e)),
+                }
+            }
+        }
+        "agents/index" => match embed::reindex_all(root).await {
+            Ok((files, chunks)) => Ok(json!({ "files": files, "chunks": chunks })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "agents/status" => {
+            let (files, chunks) = embed::stats(root).unwrap_or((0, 0));
+            Ok(json!({
+                "indexedFiles": files,
+                "chunks": chunks,
+                "embedModel": agents::embed_model_name(root).unwrap_or_default(),
+                "currentModel": embed::index_is_current_model(root),
+            }))
+        }
         "codex/scan" => codex_scan(root, &req.params).map_err(rpc_err),
         "stats/get" => (|| -> AnyResult<Value> {
             let today = param(&req.params, "today")?;
@@ -473,7 +528,7 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
             let cfg = ai::load_config(root);
             Ok(json!({
                 "provider": cfg.provider, "model": cfg.model,
-                "baseUrl": cfg.base_url, "enabled": cfg.enabled,
+                "baseUrl": cfg.base_url, "embedModel": cfg.embed_model, "enabled": cfg.enabled,
                 "hasKey": ai::has_key(),
             }))
         },
@@ -482,6 +537,7 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
                 provider: req.params["provider"].as_str().unwrap_or("openrouter").to_string(),
                 model: req.params["model"].as_str().unwrap_or("openrouter/auto").to_string(),
                 base_url: req.params["baseUrl"].as_str().unwrap_or("").to_string(),
+                embed_model: req.params["embedModel"].as_str().unwrap_or("").to_string(),
                 enabled: req.params["enabled"].as_bool().unwrap_or(false),
             };
             ai::save_config(root, cfg).map(|_| json!({ "success": true })).map_err(rpc_err)

@@ -22,6 +22,9 @@ spellbook = "0.4.2"
 nlprule = "0.6.4"
 flate2 = "1.1.9"
 harper-core = "2.8.0"
+rig-core = "0.42.0"
+rig-agent = "0.42.0"
+futures = "0.3.34"
 
 # harper's curated dictionary decode is unbearably slow unoptimized; keep
 # these crates optimized even in dev builds so engine warm-up stays fast.

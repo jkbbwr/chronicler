@@ -107,6 +107,20 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 6;",
         )?;
     }
+    if version < 7 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS embeddings (
+                 file       TEXT NOT NULL,
+                 chunk      INTEGER NOT NULL,
+                 start_line INTEGER NOT NULL,
+                 end_line   INTEGER NOT NULL,
+                 text       TEXT NOT NULL,
+                 vector     BLOB NOT NULL,
+                 PRIMARY KEY (file, chunk)
+             );
+             PRAGMA user_version = 7;",
+        )?;
+    }
     Ok(())
 }
 

@@ -4,7 +4,7 @@ import { workbench, setWorkbench, updateSettings, type EditorMode } from "./stor
 import { EditorView, type EditorApi } from "./components/editor/EditorView";
 import { type EntityRef } from "./components/editor/entityLinks";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
-import { AgentView } from "./components/sidebar/AgentView";
+import { AgentView, handleRigEvent } from "./components/sidebar/AgentView";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { OutlinerView } from "./components/sidebar/OutlinerView";
@@ -291,6 +291,8 @@ const App: Component = () => {
         for (const [file, diags] of Object.entries(event.params?.files ?? {})) {
           setDiagMap(file, diags as Diag[]);
         }
+      } else if (typeof event.method === "string" && event.method.startsWith("agents/")) {
+        handleRigEvent(event.method, event.params ?? {});
       } else if (event.method === "codex/changed") {
         setCodexVersion(v => v + 1);
         const n = event.params?.newCandidates ?? 0;
@@ -757,7 +759,19 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
-    { id: "rig.open", title: "Rig: Open Assistant", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
+    { id: "rig.open", title: "Agent: Open Panel", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
+    {
+      id: "agent.index", title: "Agent: Index Manuscript",
+      run: async () => {
+        setStatus("Agent: indexing manuscript...");
+        try {
+          const res = await window.chronicler.invoke("agents/index");
+          setStatus(`Agent: indexed ${res.chunks} passages across ${res.files} scenes`);
+        } catch (err: any) {
+          setStatus(`Agent index failed: ${err.message}`);
+        }
+      },
+    },
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
     { id: "view.indexCards", title: "View: Index Cards", keybinding: "Mod+Shift+I", run: openCardsTab },
     {

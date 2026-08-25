@@ -36,7 +36,7 @@ const Row: Component<{ name: string; hint?: string; children: any }> = (props) =
 );
 
 export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props) => {
-  const [ai, setAi] = createStore({ provider: "openrouter", model: "openrouter/auto", baseUrl: "", enabled: false, hasKey: false });
+  const [ai, setAi] = createStore({ provider: "openrouter", model: "openrouter/auto", baseUrl: "", embedModel: "", enabled: false, hasKey: false });
   const [keyDraft, setKeyDraft] = createSignal("");
   const [models, setModels] = createSignal<string[]>([]);
   const [testResult, setTestResult] = createSignal<{ ok: boolean; text: string } | null>(null);
@@ -167,6 +167,9 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
             <datalist id="ai-model-list">
               <For each={models()}>{(m) => <option value={m} />}</For>
             </datalist>
+          </Row>
+          <Row name="Embedding model" hint={ai.provider === "openrouter" ? "For manuscript semantic search. Blank uses openai/text-embedding-3-small." : "For manuscript semantic search — required, e.g. nomic-embed-text on Ollama or text-embedding-3-small on OpenAI. Changing it needs a reindex."}>
+            <input style={input} type="text" list="ai-model-list" placeholder={ai.provider === "openrouter" ? "openai/text-embedding-3-small" : "nomic-embed-text"} value={ai.embedModel} onChange={(e) => saveAi({ embedModel: e.currentTarget.value })} />
           </Row>
           <Row name="API key" hint={ai.hasKey ? "A key is stored (OS-keychain encrypted). Enter a new one to replace it, or store empty to clear." : ai.provider === "openrouter" ? "Required. Encrypted with the OS keychain; held in memory only by the local backend." : "Optional — local servers usually run without one."}>
             <div style={{ display: "flex", gap: "8px" }}>
