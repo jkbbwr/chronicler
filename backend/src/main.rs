@@ -164,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
     })?;
     notify::Watcher::watch(&mut watcher, &root, notify::RecursiveMode::Recursive)?;
 
-    {
+    let debounce_task = {
         let tx = tx_out.clone();
         let root = root.clone();
         tokio::spawn(async move {
@@ -196,8 +196,8 @@ async fn main() -> anyhow::Result<()> {
                 });
                 let _ = tx.send(notif.to_string()).await;
             }
-        });
-    }
+        })
+    };
 
     use tokio::io::AsyncBufReadExt;
     let stdin = tokio::io::stdin();
@@ -221,6 +221,10 @@ async fn main() -> anyhow::Result<()> {
     // Stdin closed: finish in-flight requests and flush all queued responses
     // before exiting, or the last responses (e.g. a save on quit) get dropped.
     while tasks.join_next().await.is_some() {}
+    // The watcher pipeline holds a clone of tx_out; tear it down or the
+    // writer's channel never closes and the process hangs instead of exiting.
+    debounce_task.abort();
+    drop(watcher);
     drop(tx_out);
     let _ = writer.await;
 
