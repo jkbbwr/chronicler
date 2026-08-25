@@ -14,6 +14,8 @@ import {
 export interface EntityRef {
   /** Lowercased name or alias to match. */
   pattern: string;
+  /** The name or alias in its original casing (for autocomplete). */
+  display: string;
   id: number;
   name: string;
   kind: string;

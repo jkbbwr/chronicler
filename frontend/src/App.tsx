@@ -202,9 +202,9 @@ const App: Component = () => {
         const refs: EntityRef[] = [];
         for (const e of res.entities) {
           const base = { id: e.id, name: e.name, kind: e.kind, summary: e.summary, mentions: e.mentionCount };
-          refs.push({ pattern: e.name.toLowerCase(), ...base });
+          refs.push({ pattern: e.name.toLowerCase(), display: e.name, ...base });
           for (const a of e.aliases as string[]) {
-            refs.push({ pattern: a.toLowerCase(), ...base });
+            refs.push({ pattern: a.toLowerCase(), display: a, ...base });
           }
         }
         setEntityRefs(refs.filter(r => r.pattern.length >= 2).sort((a, b) => b.pattern.length - a.pattern.length));

@@ -10,6 +10,7 @@ import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
 import { typewriterScroll, focusMode } from "./writingModes";
 import { smartTypography } from "./smartTypography";
+import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { entityLinks, type EntityRef } from "./entityLinks";
 import { diagSquiggles, type Diag } from "./diagSquiggles";
 
@@ -69,6 +70,26 @@ export const EditorView: Component<EditorProps> = (props) => {
 
   const entityExtension = () =>
     entityLinks(props.entityRefs ?? [], (id, name) => props.onOpenEntity?.(id, name));
+
+  // Codex names and aliases complete as you type — two letters in, matches
+  // by prefix, original casing preserved.
+  const codexCompletions = (ctx: CompletionContext): CompletionResult | null => {
+    const word = ctx.matchBefore(/[\p{L}][\p{L}'’-]*$/u);
+    if (!word || word.to - word.from < 2) return null;
+    const q = ctx.state.sliceDoc(word.from, word.to).toLowerCase();
+    const seen = new Set<string>();
+    const options = [];
+    for (const r of props.entityRefs ?? []) {
+      const label = r.display;
+      if (!label || seen.has(label) || !label.toLowerCase().startsWith(q)) continue;
+      if (label.toLowerCase() === q) continue; // already fully typed
+      seen.add(label);
+      options.push({ label, type: "keyword", detail: r.kind });
+    }
+    if (options.length === 0) return null;
+    options.sort((a, b) => a.label.localeCompare(b.label));
+    return { from: word.from, options, validFor: /[\p{L}'’-]*$/u };
+  };
 
   const writingExtensions = () => [
     ...(workbench.settings.typewriterMode ? [typewriterScroll()] : []),
@@ -135,6 +156,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         writingCompartment.of(writingExtensions()),
         entitiesCompartment.of(entityExtension()),
         diagsCompartment.of(diagSquiggles(props.diags ?? [])),
+        autocompletion({ override: [codexCompletions], icons: false }),
         CodeMirrorView.lineWrapping,
         // Native spellcheck stays off: the diagnostics engine owns squiggles
         CodeMirrorView.contentAttributes.of({ spellcheck: "false", autocorrect: "on", autocapitalize: "on" }),
