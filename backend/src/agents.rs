@@ -1,4 +1,4 @@
-use crate::{ai, codex, embed};
+use crate::{ai, codex, db, embed};
 use anyhow::{bail, Context, Result};
 use rig_agent::agent::{Agent, AgentBuilder, MultiTurnStreamItem};
 use rig_agent::completion::{Message, Prompt};
@@ -529,6 +529,290 @@ pub async fn run_chat(
             Err(e) => {
                 notify(&tx, "agents/error", json!({ "id": id, "message": e.to_string() })).await;
                 bail!("model stream failed: {e}");
+            }
+        }
+    }
+}
+
+// ---------- Continuity sweep ----------
+
+const SWEEP_RUN_ID: &str = "continuity";
+
+/// Find a verbatim quote in scene content: (1-based line, char col range).
+/// Falls back to a case-insensitive match; multi-line quotes anchor on
+/// their first line.
+fn locate_quote(content: &str, quote: &str) -> Option<(usize, usize, usize)> {
+    let needle = quote.lines().next().unwrap_or(quote).trim();
+    if needle.is_empty() {
+        return None;
+    }
+    let find = |case_sensitive: bool| {
+        for (i, line) in content.lines().enumerate() {
+            let hay =
+                if case_sensitive { line.to_string() } else { line.to_lowercase() };
+            let pat = if case_sensitive { needle.to_string() } else { needle.to_lowercase() };
+            if let Some(byte_pos) = hay.find(&pat) {
+                let col = line[..byte_pos].chars().count();
+                return Some((i + 1, col, col + needle.chars().count()));
+            }
+        }
+        None
+    };
+    find(true).or_else(|| find(false))
+}
+
+struct ReportFinding {
+    root: PathBuf,
+    tx: mpsc::Sender<String>,
+}
+
+#[derive(Deserialize)]
+struct Evidence {
+    file: String,
+    quote: String,
+}
+
+#[derive(Deserialize)]
+struct FindingArgs {
+    file: String,
+    quote: String,
+    kind: String,
+    message: String,
+    #[serde(default)]
+    evidence: Vec<Evidence>,
+}
+
+impl Tool for ReportFinding {
+    const NAME: &'static str = "report_finding";
+    type Args = FindingArgs;
+    type Output = Value;
+    type Error = ToolFail;
+
+    fn description(&self) -> String {
+        "Record one continuity finding. Call this once per defensible contradiction you have \
+         verified. The quote must be copied verbatim from the scene being flagged (the LATER \
+         passage — the one that breaks continuity), under 150 characters, on one line."
+            .into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "file": { "type": "string", "description": "Scene path containing the contradicting passage" },
+                "quote": { "type": "string", "description": "Verbatim text from that scene (anchors the marker)" },
+                "kind": { "type": "string", "enum": ["timeline", "fact", "knowledge", "object", "other"] },
+                "message": { "type": "string", "description": "What contradicts what, concretely and briefly" },
+                "evidence": {
+                    "type": "array",
+                    "description": "Where the earlier fact was established",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file": { "type": "string" },
+                            "quote": { "type": "string" }
+                        },
+                        "required": ["file", "quote"]
+                    }
+                }
+            },
+            "required": ["file", "quote", "kind", "message"]
+        })
+    }
+
+    async fn call(&self, _ctx: &mut ToolContext, args: Self::Args) -> Result<Value, ToolFail> {
+        let path = crate::resolve_path(&self.root, &args.file).map_err(fail)?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", args.file))
+            .map_err(fail)?;
+        let anchored = locate_quote(&content, &args.quote);
+        let line = anchored.map(|(l, _, _)| l).unwrap_or(1);
+
+        let mut message = args.message.trim().to_string();
+        for ev in args.evidence.iter().take(4) {
+            message.push_str(&format!(" — established in {}: “{}”", ev.file, ev.quote.trim()));
+        }
+
+        let conn = db::open(&self.root).map_err(fail)?;
+        conn.execute(
+            "INSERT INTO assistant_findings (file, line, quote, kind, message, created)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![args.file, line as i64, args.quote, args.kind, message, db::now()],
+        )
+        .map_err(|e| ToolFail(e.to_string()))?;
+        notify(&self.tx, "agents/finding", json!({ "file": args.file })).await;
+        Ok(json!({ "recorded": true, "anchored": anchored.is_some() }))
+    }
+}
+
+/// Stored findings for one scene as diagnostics, re-anchored to the current
+/// text (the quote is searched again so edits don't strand the marker).
+pub fn findings_for(root: &Path, rel: &str) -> Result<Vec<Value>> {
+    let conn = db::open(root)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, line, quote, kind, message FROM assistant_findings WHERE file = ?1",
+    )?;
+    let rows: Vec<(i64, i64, String, String, String)> = stmt
+        .query_map([rel], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let content = crate::resolve_path(root, rel)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .map(|(id, stored_line, quote, kind, message)| {
+            let (line, col_start, col_end) =
+                locate_quote(&content, &quote).unwrap_or((stored_line as usize, 0, 0));
+            json!({
+                "source": "assistant",
+                "severity": "info",
+                "file": rel,
+                "line": line,
+                "colStart": col_start,
+                "colEnd": col_end,
+                "text": quote.chars().take(60).collect::<String>(),
+                "message": message,
+                "ruleId": format!("ASSIST/{}", kind.to_uppercase()),
+                "findingId": id,
+            })
+        })
+        .collect())
+}
+
+pub fn dismiss_finding(root: &Path, id: i64) -> Result<()> {
+    let conn = db::open(root)?;
+    conn.execute("DELETE FROM assistant_findings WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+fn clear_findings(root: &Path, scope: Option<&str>) -> Result<()> {
+    let conn = db::open(root)?;
+    match scope {
+        Some(file) => conn.execute("DELETE FROM assistant_findings WHERE file = ?1", [file])?,
+        None => conn.execute("DELETE FROM assistant_findings", [])?,
+    };
+    Ok(())
+}
+
+fn sweep_preamble(root: &Path, files: &[String]) -> String {
+    let scenes = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| format!("{}. {}", i + 1, f))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let codex_lines = codex::list_entities(root)
+        .ok()
+        .and_then(|all| {
+            all["entities"].as_array().map(|es| {
+                es.iter()
+                    .filter_map(|e| {
+                        Some(format!(
+                            "- {} ({}): {}",
+                            e["name"].as_str()?,
+                            e["kind"].as_str().unwrap_or(""),
+                            e["summary"].as_str().unwrap_or("")
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        })
+        .unwrap_or_default();
+    format!(
+        "You are the continuity editor for a novel, working inside the writer's IDE. Your job is \
+         to find CONTRADICTIONS — not style, not taste, not deliberate mystery.\n\n\
+         Scenes in reading order:\n{scenes}\n\nWorld bible:\n{codex_lines}\n\n\
+         Method: call read_scene on each scene in order. Track what the text establishes — \
+         physical details, timeline, who knows what and when, where objects are. When a later \
+         passage contradicts something established earlier, verify with grep_manuscript or \
+         search_manuscript, then call report_finding with a verbatim quote from the LATER \
+         (contradicting) passage and evidence quotes from where the fact was established.\n\n\
+         Report only defensible contradictions a careful reader would flag. Ambiguity, \
+         intentional unreliability, and things a revision might intend are not findings. \
+         When you have read every scene, reply with a one-paragraph summary of the sweep."
+    )
+}
+
+/// Sweep the manuscript (or one scene) for continuity errors. Findings land
+/// in the db as they are reported and surface as assistant diagnostics.
+/// Returns (findings, model summary, stopped).
+pub async fn run_continuity(
+    root: &Path,
+    tx: mpsc::Sender<String>,
+    scope: Option<&str>,
+) -> Result<(usize, String, bool)> {
+    use futures::StreamExt;
+    use MultiTurnStreamItem as Item;
+    use StreamedAssistantContent as Content;
+
+    if running().lock().unwrap().contains_key(SWEEP_RUN_ID) {
+        bail!("a continuity sweep is already running");
+    }
+    let files = match scope {
+        Some(f) => vec![f.to_string()],
+        None => crate::list_md_files(root),
+    };
+    if files.is_empty() {
+        bail!("no scenes to sweep");
+    }
+    clear_findings(root, scope)?;
+
+    let cfg = ai::load_config(root);
+    let root_buf = root.to_path_buf();
+    let preamble = sweep_preamble(root, &files);
+    let agent = match provider(root)? {
+        Provider::OpenRouter(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
+        Provider::Compat(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
+    }
+    .name("continuity")
+    .preamble(&preamble)
+    .tool(ReadScene { root: root_buf.clone() })
+    .tool(GrepManuscript { root: root_buf.clone() })
+    .tool(SearchManuscript { root: root_buf.clone() })
+    .tool(QueryCodex { root: root_buf.clone() })
+    .tool(ReportFinding { root: root_buf, tx: tx.clone() })
+    .build();
+
+    let mut run = RunHandle::register(SWEEP_RUN_ID);
+    let max_turns = (files.len() * 3 + 12).min(80);
+    let mut stream = agent
+        .stream_chat(Message::user("Begin the sweep."), Vec::<Message>::new())
+        .max_turns(max_turns)
+        .await;
+
+    let mut summary = String::new();
+    let mut reported = 0usize;
+    loop {
+        let item = tokio::select! {
+            _ = &mut run.cancelled => return Ok((reported, summary, true)),
+            item = stream.next() => match item {
+                Some(item) => item,
+                None => return Ok((reported, summary, false)),
+            },
+        };
+        match item {
+            Ok(Item::StreamAssistantItem(Content::Text(t))) => summary.push_str(&t.text),
+            Ok(Item::ToolExecutionCommitted { tool_call, .. }) => {
+                let name = tool_call.function.name.as_str();
+                if name == ReportFinding::NAME {
+                    reported += 1;
+                    notify(&tx, "agents/sweep", json!({ "note": format!("{} finding(s) so far", reported) })).await;
+                } else if name == ReadScene::NAME {
+                    let scene = tool_call.function.arguments["path"].as_str().unwrap_or("…");
+                    notify(&tx, "agents/sweep", json!({ "note": format!("reading {}", scene) })).await;
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                notify(&tx, "agents/error", json!({ "id": SWEEP_RUN_ID, "message": e.to_string() })).await;
+                bail!("continuity sweep failed: {e}");
             }
         }
     }

@@ -163,6 +163,40 @@ const App: Component = () => {
     recheckDiags();
   };
 
+  const dismissFinding = async (d: Diag) => {
+    if (d.findingId === undefined) return;
+    try {
+      await window.chronicler.invoke("agents/finding_dismiss", { id: d.findingId });
+      setDiagMap(d.file, (list) => (list ?? []).filter(x => x.findingId !== d.findingId));
+    } catch (err: any) {
+      setStatus(`Dismiss failed: ${err.message}`);
+    }
+  };
+
+  const [sweeping, setSweeping] = createSignal(false);
+  const runContinuity = async () => {
+    if (sweeping()) {
+      await window.chronicler.invoke("agents/stop", { id: "continuity" }).catch(() => {});
+      return;
+    }
+    setSweeping(true);
+    setStatus("Continuity sweep: starting...");
+    try {
+      const res = await window.chronicler.invoke("agents/continuity", {});
+      setStatus(
+        res.stopped
+          ? `Continuity sweep stopped — ${res.findings} finding(s) kept`
+          : `Continuity sweep done: ${res.findings} finding(s). ${(res.summary ?? "").slice(0, 140)}`
+      );
+      if (res.findings > 0) setWorkbench("panels", "bottom", "visible", true);
+    } catch (err: any) {
+      setStatus(`Continuity sweep failed: ${err.message}`);
+    } finally {
+      setSweeping(false);
+      recheckDiags();
+    }
+  };
+
   const fixDiag = async (d: Diag, replacement: string) => {
     const api = editorApis.get(d.file);
     if (api) {
@@ -291,6 +325,11 @@ const App: Component = () => {
         for (const [file, diags] of Object.entries(event.params?.files ?? {})) {
           setDiagMap(file, diags as Diag[]);
         }
+      } else if (event.method === "agents/finding") {
+        // A continuity finding just landed for this scene — refresh its diags
+        if (event.params?.file) recheckDiags(event.params.file);
+      } else if (event.method === "agents/sweep") {
+        setStatus(`Continuity sweep: ${event.params?.note ?? "working"}`);
       } else if (typeof event.method === "string" && event.method.startsWith("agents/")) {
         handleRigEvent(event.method, event.params ?? {});
       } else if (event.method === "codex/changed") {
@@ -760,6 +799,7 @@ const App: Component = () => {
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
     { id: "rig.open", title: "Agent: Open Panel", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
+    { id: "agent.continuity", title: "Agent: Check Continuity", run: runContinuity },
     {
       id: "agent.index", title: "Agent: Index Manuscript",
       run: async () => {
@@ -1139,6 +1179,7 @@ const App: Component = () => {
                 onAddWord={addWordFromDiag}
                 onFix={fixDiag}
                 onIgnore={ignoreDiag}
+                onDismiss={dismissFinding}
                 onRecheck={() => recheckDiags()}
                 onStatus={setStatus}
               />

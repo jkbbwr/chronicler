@@ -18,6 +18,7 @@ interface ProblemsPanelProps {
   onAddWord: (d: Diag) => void;
   onFix: (d: Diag, replacement: string) => void;
   onIgnore: (d: Diag, global: boolean) => void;
+  onDismiss: (d: Diag) => void;
   onRecheck: () => void;
   onStatus: (m: string) => void;
 }
@@ -156,9 +157,16 @@ export const ProblemsPanel: Component<ProblemsPanelProps> = (props) => {
                             + Dictionary
                           </button>
                         </Show>
-                        <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, false); }} title={d.source === "spelling" ? "Ignore this word in this file" : "Ignore this rule at this text in this file"}>
-                          Ignore
-                        </button>
+                        <Show when={d.source !== "assistant"}>
+                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, false); }} title={d.source === "spelling" ? "Ignore this word in this file" : "Ignore this rule at this text in this file"}>
+                            Ignore
+                          </button>
+                        </Show>
+                        <Show when={d.source === "assistant"}>
+                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onDismiss(d); }} title="Remove this finding">
+                            Dismiss
+                          </button>
+                        </Show>
                         <Show when={d.source === "grammar" || d.source === "style"}>
                           <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, true); }} title="Disable this rule everywhere">
                             Disable rule

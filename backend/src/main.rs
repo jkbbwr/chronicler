@@ -297,12 +297,8 @@ async fn main() -> anyhow::Result<()> {
                                 tracing::warn!("mention reindex failed: {:#}", e);
                             }
                             let mut by_file = serde_json::Map::new();
-                            if diagnostics::is_ready() {
-                                for rel in &files2 {
-                                    if let Ok(d) = diagnostics::check_file(&root2, rel) {
-                                        by_file.insert(rel.clone(), Value::Array(d));
-                                    }
-                                }
+                            for rel in &files2 {
+                                by_file.insert(rel.clone(), Value::Array(collect_diags(&root2, rel)));
                             }
                             by_file
                         })
@@ -487,6 +483,19 @@ async fn handle_request_line(
             let id = req.params["id"].as_str().unwrap_or("");
             Ok(json!({ "stopped": agents::stop_chat(id) }))
         }
+        "agents/continuity" => {
+            match agents::run_continuity(root, tx.clone(), req.params["rel_path"].as_str()).await
+            {
+                Ok((findings, summary, stopped)) => {
+                    Ok(json!({ "findings": findings, "summary": summary, "stopped": stopped }))
+                }
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
+        "agents/finding_dismiss" => {
+            let id = req.params["id"].as_i64().unwrap_or(-1);
+            agents::dismiss_finding(root, id).map(|_| json!({ "success": true })).map_err(rpc_err)
+        }
         "agents/fill" => {
             let id = req.params["id"].as_i64().unwrap_or(-1);
             let field = req.params["field"].as_str().unwrap_or("").to_string();
@@ -614,6 +623,17 @@ fn db_set(root: &Path, params: &Value) -> AnyResult<Value> {
     Ok(json!({ "success": true }))
 }
 
+/// Language-engine diagnostics plus stored assistant findings for one scene.
+/// Missing language models yield an empty engine list — assistant findings
+/// surface regardless.
+fn collect_diags(root: &Path, rel: &str) -> Vec<Value> {
+    let mut diags = diagnostics::check_file(root, rel).unwrap_or_default();
+    if let Ok(mut findings) = agents::findings_for(root, rel) {
+        diags.append(&mut findings);
+    }
+    diags
+}
+
 fn diag_check(root: &Path, params: &Value) -> AnyResult<Value> {
     let files: Vec<String> = match params["rel_path"].as_str() {
         Some(f) => vec![f.to_string()],
@@ -621,17 +641,7 @@ fn diag_check(root: &Path, params: &Value) -> AnyResult<Value> {
     };
     let mut by_file = serde_json::Map::new();
     for rel in &files {
-        match diagnostics::check_file(root, rel) {
-            Ok(diags) => {
-                by_file.insert(rel.clone(), Value::Array(diags));
-            }
-            Err(e) => {
-                // Missing models fail the whole call; per-file read errors don't
-                if !diagnostics::is_ready() {
-                    return Err(e);
-                }
-            }
-        }
+        by_file.insert(rel.clone(), Value::Array(collect_diags(root, rel)));
     }
     Ok(json!({ "files": by_file }))
 }

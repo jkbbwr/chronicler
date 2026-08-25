@@ -21,6 +21,8 @@ export interface Diag {
   message: string;
   ruleId: string;
   replacements?: string[];
+  /** Assistant findings only: db row id, for dismissal. */
+  findingId?: number;
 }
 
 const squiggleTheme = EditorView.baseTheme({

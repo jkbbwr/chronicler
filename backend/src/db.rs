@@ -121,6 +121,20 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 7;",
         )?;
     }
+    if version < 8 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS assistant_findings (
+                 id      INTEGER PRIMARY KEY,
+                 file    TEXT NOT NULL,
+                 line    INTEGER NOT NULL,
+                 quote   TEXT NOT NULL,
+                 kind    TEXT NOT NULL,
+                 message TEXT NOT NULL,
+                 created INTEGER NOT NULL
+             );
+             PRAGMA user_version = 8;",
+        )?;
+    }
     Ok(())
 }
 
