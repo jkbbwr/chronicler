@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+app.setName("Chronicler");
+
 let mainWindow: BrowserWindow | null = null;
 let rustProcess: ChildProcess | null = null;
 
@@ -45,7 +47,15 @@ function loadRecents(): Recents {
   try {
     return JSON.parse(fs.readFileSync(recentsFile(), "utf8"));
   } catch {
-    return { last: null, projects: [] };
+    // One-time migration from before the app was named (userData was "frontend")
+    try {
+      const legacy = path.join(app.getPath("userData"), "..", "frontend", "recent-projects.json");
+      const recents = JSON.parse(fs.readFileSync(legacy, "utf8"));
+      saveRecents(recents);
+      return recents;
+    } catch {
+      return { last: null, projects: [] };
+    }
   }
 }
 

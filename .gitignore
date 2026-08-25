@@ -4,3 +4,4 @@ dist/
 dist-electron/
 .env
 .DS_Store
+release/

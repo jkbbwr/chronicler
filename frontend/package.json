@@ -1,13 +1,39 @@
 {
-  "name": "frontend",
+  "name": "chronicler",
+  "productName": "Chronicler",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "package": "bun run build && electron-builder --dir",
+    "dist": "bun run build && electron-builder",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "dev.kibb.chronicler",
+    "productName": "Chronicler",
+    "electronVersion": "43.4.1",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/target/release/chronicler-backend",
+        "to": "chronicler-backend"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null
+    }
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -26,6 +52,7 @@
     "@types/node": "^26.2.0",
     "chokidar": "^5.0.0",
     "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vite-plugin-electron": "^1.1.1",
