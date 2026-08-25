@@ -5,6 +5,7 @@ import {
   EditorView,
   ViewPlugin,
   type ViewUpdate,
+  hoverTooltip,
 } from "@codemirror/view";
 
 // Codex entity references in prose: names and aliases get a subtle accent
@@ -15,6 +16,9 @@ export interface EntityRef {
   pattern: string;
   id: number;
   name: string;
+  kind: string;
+  summary: string;
+  mentions: number;
 }
 
 interface Span {
@@ -60,7 +64,79 @@ const entityTheme = EditorView.baseTheme({
     borderBottomStyle: "solid",
     cursor: "pointer",
   },
+  ".cm-tooltip.cm-entity-tooltip": {
+    backgroundColor: "var(--panel-bg, #212121)",
+    border: "1px solid var(--border-color, #333)",
+    borderRadius: "7px",
+    padding: "10px 12px",
+    maxWidth: "340px",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontSize: "12px",
+    color: "var(--text-main, #e0e0e0)",
+    boxShadow: "0 6px 20px rgba(0,0,0,0.35)",
+  },
+  ".cm-entity-tooltip .head": {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "8px",
+    marginBottom: "4px",
+  },
+  ".cm-entity-tooltip .name": { fontWeight: "600", fontSize: "13px" },
+  ".cm-entity-tooltip .kind": {
+    fontSize: "10px",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+    color: "var(--text-muted, #888)",
+    border: "1px solid var(--border-color, #333)",
+    borderRadius: "8px",
+    padding: "1px 6px",
+  },
+  ".cm-entity-tooltip .summary": {
+    color: "var(--text-muted, #999)",
+    lineHeight: "1.45",
+    marginBottom: "6px",
+  },
+  ".cm-entity-tooltip .foot": {
+    color: "var(--text-faint, #666)",
+    fontSize: "11px",
+  },
 });
+
+const isMac = navigator.platform.toLowerCase().includes("mac");
+
+function tooltipDom(ref: EntityRef): HTMLElement {
+  const dom = document.createElement("div");
+  dom.className = "cm-entity-tooltip";
+
+  const head = document.createElement("div");
+  head.className = "head";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = ref.name;
+  const kind = document.createElement("span");
+  kind.className = "kind";
+  kind.textContent = ref.kind;
+  head.append(name, kind);
+  dom.append(head);
+
+  const summary = document.createElement("div");
+  summary.className = "summary";
+  if (ref.summary) {
+    summary.textContent = ref.summary;
+  } else {
+    summary.textContent = "No summary yet.";
+    summary.style.fontStyle = "italic";
+  }
+  dom.append(summary);
+
+  const foot = document.createElement("div");
+  foot.className = "foot";
+  const mentions = `${ref.mentions} mention${ref.mentions === 1 ? "" : "s"}`;
+  foot.textContent = `${mentions} · ${isMac ? "⌘" : "Ctrl+"}click to open`;
+  dom.append(foot);
+
+  return dom;
+}
 
 /**
  * Highlight codex entities. `refs` must be pre-sorted longest-pattern-first
@@ -106,6 +182,17 @@ export function entityLinks(
     { decorations: (v) => v.decorations }
   );
 
+  const entityHover = hoverTooltip((view, pos) => {
+    const span = spansAt(view, pos);
+    if (!span) return null;
+    return {
+      pos: span.from,
+      end: span.to,
+      above: true,
+      create: () => ({ dom: tooltipDom(span.ref) }),
+    };
+  }, { hoverTime: 250 });
+
   const clickHandler = EditorView.domEventHandlers({
     mousedown: (event, view) => {
       if (!event.metaKey && !event.ctrlKey) return false;
@@ -119,5 +206,5 @@ export function entityLinks(
     },
   });
 
-  return [plugin, clickHandler, entityTheme];
+  return [plugin, clickHandler, entityHover, entityTheme];
 }
