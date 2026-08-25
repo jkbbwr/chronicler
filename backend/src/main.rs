@@ -1,3 +1,4 @@
+use anyhow::{bail, Context};
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -11,17 +12,32 @@ mod db;
 mod rpc;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
 
+type AnyResult<T> = anyhow::Result<T>;
+
+/// Render an error (with its whole context chain) into a JSON-RPC error pair.
+fn rpc_err(e: anyhow::Error) -> (i32, String) {
+    (-32000, format!("{:#}", e))
+}
+
+/// Required non-empty string parameter.
+fn param<'a>(params: &'a Value, key: &str) -> AnyResult<&'a str> {
+    match params[key].as_str() {
+        Some(s) if !s.is_empty() => Ok(s),
+        _ => bail!("Missing param: {}", key),
+    }
+}
+
 /// Resolve a client-supplied relative path against the project root,
 /// rejecting anything that could escape it (absolute paths, `..`).
-fn resolve_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
+fn resolve_path(root: &Path, rel: &str) -> AnyResult<PathBuf> {
     let p = Path::new(rel);
     if p.is_absolute() {
-        return Err("Absolute paths are not allowed".to_string());
+        bail!("Absolute paths are not allowed");
     }
     for comp in p.components() {
         match comp {
             Component::Normal(_) | Component::CurDir => {}
-            _ => return Err("Path escapes project root".to_string()),
+            _ => bail!("Path escapes project root"),
         }
     }
     Ok(root.join(p))
@@ -86,24 +102,24 @@ fn search_files(dir: &Path, prefix: &str, query_lower: &str, results: &mut Vec<s
 }
 
 /// Run git in the project root with a fixed snapshot identity.
-fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
+fn run_git(root: &Path, args: &[&str]) -> AnyResult<String> {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
         .args(["-c", "user.name=Chronicler", "-c", "user.email=snapshots@chronicler.local"])
         .args(args)
         .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+        .context("running git")?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
 }
 
-fn ensure_repo(root: &Path) -> Result<(), String> {
+fn ensure_repo(root: &Path) -> AnyResult<()> {
     if run_git(root, &["rev-parse", "--git-dir"]).is_err() {
-        run_git(root, &["init"])?;
+        run_git(root, &["init"]).context("initializing snapshot repository")?;
     }
     Ok(())
 }
@@ -249,215 +265,28 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
 
     info!("Received method: {}", req.method);
 
-    // Dispatch methods
-    let result = match req.method.as_str() {
+    // Dispatch methods; handlers return anyhow::Result and are rendered
+    // into JSON-RPC errors (with full context chains) in one place.
+    let result: Result<Value, (i32, String)> = match req.method.as_str() {
         "ping" => Ok(json!("pong")),
         "system/info" => Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
             "status": "ready",
             "root": root.display().to_string()
         })),
-        "db/get" => {
-            let key = req.params["key"].as_str().unwrap_or("");
-            if key.is_empty() {
-                Err((-32602, "Missing key".to_string()))
-            } else {
-                match db::get_setting(root, key) {
-                    Ok(value) => Ok(json!({ "value": value })),
-                    Err(e) => Err((-32000, format!("{:#}", e))),
-                }
-            }
-        },
-        "db/set" => {
-            let key = req.params["key"].as_str().unwrap_or("");
-            let value = req.params["value"].as_str().unwrap_or("");
-            if key.is_empty() {
-                Err((-32602, "Missing key".to_string()))
-            } else {
-                match db::set_setting(root, key, value) {
-                    Ok(()) => Ok(json!({ "success": true })),
-                    Err(e) => Err((-32000, format!("{:#}", e))),
-                }
-            }
-        },
-        "compile/run" => {
-            let result = (|| -> Result<Value, (i32, String)> {
-                let settings: compile::CompileSettings =
-                    serde_json::from_value(req.params["settings"].clone())
-                        .map_err(|e| (-32602, format!("Bad compile settings: {}", e)))?;
-                let specs: Vec<compile::ChapterSpec> =
-                    serde_json::from_value(req.params["chapters"].clone())
-                        .map_err(|e| (-32602, format!("Bad chapter list: {}", e)))?;
-                let mut chapters: Vec<(String, Vec<String>)> = Vec::new();
-                for spec in specs {
-                    let mut scenes = Vec::new();
-                    for rel in &spec.scenes {
-                        let path = resolve_path(root, rel).map_err(|e| (-32602, e))?;
-                        let content = std::fs::read_to_string(&path)
-                            .map_err(|e| (-32000, format!("Failed to read {}: {}", rel, e)))?;
-                        scenes.push(content);
-                    }
-                    chapters.push((spec.title, scenes));
-                }
-                let output = compile::run(root, chapters, &settings)
-                    .map_err(|e| (-32000, format!("{:#}", e)))?;
-                Ok(json!({ "output": output.display().to_string() }))
-            })();
-            result
-        },
-        "snapshot/create" => {
-            let message = req.params["message"].as_str().unwrap_or("Snapshot");
-            let result = (|| -> Result<Value, String> {
-                ensure_repo(root)?;
-                run_git(root, &["add", "-A"])?;
-                let status = run_git(root, &["status", "--porcelain"])?;
-                if status.trim().is_empty() {
-                    return Ok(json!({ "created": false, "reason": "No changes since last snapshot" }));
-                }
-                run_git(root, &["commit", "-m", message])?;
-                Ok(json!({ "created": true }))
-            })();
-            result.map_err(|e| (-32000, e))
-        },
-        "snapshot/list" => {
-            match run_git(root, &["log", "--pretty=format:%H\u{1f}%ct\u{1f}%s", "-n", "50"]) {
-                Err(_) => Ok(json!({ "snapshots": [] })), // not a repo yet
-                Ok(log) => {
-                    let snapshots: Vec<Value> = log
-                        .lines()
-                        .filter_map(|line| {
-                            let mut parts = line.split('\u{1f}');
-                            let hash = parts.next()?;
-                            let timestamp: i64 = parts.next()?.parse().ok()?;
-                            let message = parts.next().unwrap_or("");
-                            Some(json!({ "hash": hash, "timestamp": timestamp, "message": message }))
-                        })
-                        .collect();
-                    Ok(json!({ "snapshots": snapshots }))
-                }
-            }
-        },
-        "snapshot/restore_file" => {
-            let hash = req.params["hash"].as_str().unwrap_or("");
-            let rel_path = req.params["rel_path"].as_str().unwrap_or("");
-            if hash.is_empty() || rel_path.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                Err((-32602, "Missing or invalid hash/rel_path".to_string()))
-            } else {
-                match resolve_path(root, rel_path) {
-                    Err(e) => Err((-32602, e)),
-                    Ok(_) => match run_git(root, &["checkout", hash, "--", rel_path]) {
-                        Ok(_) => Ok(json!({ "success": true })),
-                        Err(e) => Err((-32000, format!("Failed to restore: {}", e))),
-                    },
-                }
-            }
-        },
-        "project/search" => {
-            let query = req.params["query"].as_str().unwrap_or("");
-            if query.is_empty() {
-                Err((-32602, "Missing query".to_string()))
-            } else {
-                let mut results = Vec::new();
-                search_files(root, "", &query.to_lowercase(), &mut results);
-                Ok(json!({ "results": results }))
-            }
-        },
-        "document/read" => {
-            let rel_path = req.params["rel_path"].as_str().unwrap_or("");
-            if rel_path.is_empty() {
-                Err((-32602, "Missing rel_path".to_string()))
-            } else {
-                match resolve_path(root, rel_path) {
-                    Err(e) => Err((-32602, e)),
-                    Ok(path) => match std::fs::read_to_string(&path) {
-                        Ok(content) => Ok(json!({ "content": content })),
-                        Err(e) => Err((-32000, format!("Failed to read file: {}", e))),
-                    },
-                }
-            }
-        },
-        "document/save" => {
-            let rel_path = req.params["rel_path"].as_str().unwrap_or("");
-            let content = req.params["content"].as_str().unwrap_or("");
-            if rel_path.is_empty() {
-                Err((-32602, "Missing rel_path".to_string()))
-            } else {
-                match resolve_path(root, rel_path) {
-                    Err(e) => Err((-32602, e)),
-                    Ok(path) => match atomic_write(&path, content) {
-                        Ok(_) => Ok(json!({ "success": true })),
-                        Err(e) => Err((-32000, format!("Failed to save file: {}", e))),
-                    },
-                }
-            }
-        },
-        "project/list_files" => {
-            let mut files = Vec::new();
-            get_files_recursive(root, "", &mut files);
-            // Sort files: directories first, then alphabetical
-            files.sort_by(|a, b| {
-                let a_is_dir = a["is_dir"].as_bool().unwrap_or(false);
-                let b_is_dir = b["is_dir"].as_bool().unwrap_or(false);
-                if a_is_dir && !b_is_dir {
-                    std::cmp::Ordering::Less
-                } else if !a_is_dir && b_is_dir {
-                    std::cmp::Ordering::Greater
-                } else {
-                    a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
-                }
-            });
-            Ok(json!({ "files": files }))
-        },
-        "project/create_folder" => {
-            let rel_path = req.params["rel_path"].as_str().unwrap_or("");
-            if rel_path.is_empty() {
-                Err((-32602, "Missing rel_path".to_string()))
-            } else {
-                match resolve_path(root, rel_path) {
-                    Err(e) => Err((-32602, e)),
-                    Ok(path) => match std::fs::create_dir_all(&path) {
-                        Ok(_) => Ok(json!({ "success": true })),
-                        Err(e) => Err((-32000, format!("Failed to create folder: {}", e))),
-                    },
-                }
-            }
-        },
-        "project/rename" => {
-            let old_path = req.params["old_path"].as_str().unwrap_or("");
-            let new_path = req.params["new_path"].as_str().unwrap_or("");
-            if old_path.is_empty() || new_path.is_empty() {
-                Err((-32602, "Missing old_path or new_path".to_string()))
-            } else {
-                match (resolve_path(root, old_path), resolve_path(root, new_path)) {
-                    (Err(e), _) | (_, Err(e)) => Err((-32602, e)),
-                    (Ok(old), Ok(new)) => match std::fs::rename(&old, &new) {
-                        Ok(_) => Ok(json!({ "success": true })),
-                        Err(e) => Err((-32000, format!("Failed to rename: {}", e))),
-                    },
-                }
-            }
-        },
-        "project/delete" => {
-            let path = req.params["path"].as_str().unwrap_or("");
-            if path.is_empty() {
-                Err((-32602, "Missing path".to_string()))
-            } else {
-                match resolve_path(root, path) {
-                    Err(e) => Err((-32602, e)),
-                    Ok(p) => {
-                        let result = if p.is_dir() {
-                            std::fs::remove_dir_all(&p)
-                        } else {
-                            std::fs::remove_file(&p)
-                        };
-                        match result {
-                            Ok(_) => Ok(json!({ "success": true })),
-                            Err(e) => Err((-32000, format!("Failed to delete: {}", e))),
-                        }
-                    },
-                }
-            }
-        },
+        "db/get" => db_get(root, &req.params).map_err(rpc_err),
+        "db/set" => db_set(root, &req.params).map_err(rpc_err),
+        "compile/run" => compile_run(root, &req.params).map_err(rpc_err),
+        "snapshot/create" => snapshot_create(root, &req.params).map_err(rpc_err),
+        "snapshot/list" => snapshot_list(root).map_err(rpc_err),
+        "snapshot/restore_file" => snapshot_restore_file(root, &req.params).map_err(rpc_err),
+        "project/search" => project_search(root, &req.params).map_err(rpc_err),
+        "document/read" => document_read(root, &req.params).map_err(rpc_err),
+        "document/save" => document_save(root, &req.params).map_err(rpc_err),
+        "project/list_files" => Ok(project_list_files(root)),
+        "project/create_folder" => project_create_folder(root, &req.params).map_err(rpc_err),
+        "project/rename" => project_rename(root, &req.params).map_err(rpc_err),
+        "project/delete" => project_delete(root, &req.params).map_err(rpc_err),
         _ => Err((-32601, format!("Method not found: {}", req.method))),
     };
 
@@ -465,4 +294,148 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         Ok(res) => Some(JsonRpcResponse::success(req.id, res)),
         Err((code, msg)) => Some(JsonRpcResponse::error(req.id, code, msg)),
     }
+}
+
+fn db_get(root: &Path, params: &Value) -> AnyResult<Value> {
+    let key = param(params, "key")?;
+    Ok(json!({ "value": db::get_setting(root, key)? }))
+}
+
+fn db_set(root: &Path, params: &Value) -> AnyResult<Value> {
+    let key = param(params, "key")?;
+    let value = params["value"].as_str().unwrap_or("");
+    db::set_setting(root, key, value)?;
+    Ok(json!({ "success": true }))
+}
+
+fn compile_run(root: &Path, params: &Value) -> AnyResult<Value> {
+    let settings: compile::CompileSettings =
+        serde_json::from_value(params["settings"].clone()).context("bad compile settings")?;
+    let specs: Vec<compile::ChapterSpec> =
+        serde_json::from_value(params["chapters"].clone()).context("bad chapter list")?;
+    let mut chapters: Vec<(String, Vec<String>)> = Vec::new();
+    for spec in specs {
+        let mut scenes = Vec::new();
+        for rel in &spec.scenes {
+            let path = resolve_path(root, rel)?;
+            let content =
+                std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?;
+            scenes.push(content);
+        }
+        chapters.push((spec.title, scenes));
+    }
+    let output = compile::run(root, chapters, &settings)?;
+    Ok(json!({ "output": output.display().to_string() }))
+}
+
+fn snapshot_create(root: &Path, params: &Value) -> AnyResult<Value> {
+    let message = params["message"].as_str().unwrap_or("Snapshot");
+    ensure_repo(root)?;
+    run_git(root, &["add", "-A"])?;
+    let status = run_git(root, &["status", "--porcelain"])?;
+    if status.trim().is_empty() {
+        return Ok(json!({ "created": false, "reason": "No changes since last snapshot" }));
+    }
+    run_git(root, &["commit", "-m", message]).context("committing snapshot")?;
+    Ok(json!({ "created": true }))
+}
+
+fn snapshot_list(root: &Path) -> AnyResult<Value> {
+    match run_git(root, &["log", "--pretty=format:%H\u{1f}%ct\u{1f}%s", "-n", "50"]) {
+        Err(_) => Ok(json!({ "snapshots": [] })), // not a repo yet
+        Ok(log) => {
+            let snapshots: Vec<Value> = log
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.split('\u{1f}');
+                    let hash = parts.next()?;
+                    let timestamp: i64 = parts.next()?.parse().ok()?;
+                    let message = parts.next().unwrap_or("");
+                    Some(json!({ "hash": hash, "timestamp": timestamp, "message": message }))
+                })
+                .collect();
+            Ok(json!({ "snapshots": snapshots }))
+        }
+    }
+}
+
+fn snapshot_restore_file(root: &Path, params: &Value) -> AnyResult<Value> {
+    let hash = param(params, "hash")?;
+    let rel_path = param(params, "rel_path")?;
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("Invalid snapshot hash");
+    }
+    resolve_path(root, rel_path)?;
+    run_git(root, &["checkout", hash, "--", rel_path])
+        .with_context(|| format!("restoring {}", rel_path))?;
+    Ok(json!({ "success": true }))
+}
+
+fn project_search(root: &Path, params: &Value) -> AnyResult<Value> {
+    let query = param(params, "query")?;
+    let mut results = Vec::new();
+    search_files(root, "", &query.to_lowercase(), &mut results);
+    Ok(json!({ "results": results }))
+}
+
+fn document_read(root: &Path, params: &Value) -> AnyResult<Value> {
+    let rel_path = param(params, "rel_path")?;
+    let path = resolve_path(root, rel_path)?;
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel_path))?;
+    Ok(json!({ "content": content }))
+}
+
+fn document_save(root: &Path, params: &Value) -> AnyResult<Value> {
+    let rel_path = param(params, "rel_path")?;
+    let content = params["content"].as_str().unwrap_or("");
+    let path = resolve_path(root, rel_path)?;
+    atomic_write(&path, content).with_context(|| format!("saving {}", rel_path))?;
+    Ok(json!({ "success": true }))
+}
+
+fn project_list_files(root: &Path) -> Value {
+    let mut files = Vec::new();
+    get_files_recursive(root, "", &mut files);
+    // Sort files: directories first, then alphabetical
+    files.sort_by(|a, b| {
+        let a_is_dir = a["is_dir"].as_bool().unwrap_or(false);
+        let b_is_dir = b["is_dir"].as_bool().unwrap_or(false);
+        if a_is_dir && !b_is_dir {
+            std::cmp::Ordering::Less
+        } else if !a_is_dir && b_is_dir {
+            std::cmp::Ordering::Greater
+        } else {
+            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        }
+    });
+    json!({ "files": files })
+}
+
+fn project_create_folder(root: &Path, params: &Value) -> AnyResult<Value> {
+    let rel_path = param(params, "rel_path")?;
+    let path = resolve_path(root, rel_path)?;
+    std::fs::create_dir_all(&path).with_context(|| format!("creating {}", rel_path))?;
+    Ok(json!({ "success": true }))
+}
+
+fn project_rename(root: &Path, params: &Value) -> AnyResult<Value> {
+    let old_path = param(params, "old_path")?;
+    let new_path = param(params, "new_path")?;
+    let old = resolve_path(root, old_path)?;
+    let new = resolve_path(root, new_path)?;
+    std::fs::rename(&old, &new)
+        .with_context(|| format!("renaming {} to {}", old_path, new_path))?;
+    Ok(json!({ "success": true }))
+}
+
+fn project_delete(root: &Path, params: &Value) -> AnyResult<Value> {
+    let rel = param(params, "path")?;
+    let p = resolve_path(root, rel)?;
+    if p.is_dir() {
+        std::fs::remove_dir_all(&p).with_context(|| format!("deleting folder {}", rel))?;
+    } else {
+        std::fs::remove_file(&p).with_context(|| format!("deleting {}", rel))?;
+    }
+    Ok(json!({ "success": true }))
 }

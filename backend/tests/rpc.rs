@@ -117,7 +117,7 @@ fn compile_manuscript() {
     let out = run["result"]["output"].as_str().expect("compile failed");
     assert!(out.ends_with("manuscript.typ"));
     let typ = std::fs::read_to_string(out).unwrap();
-    assert!(typ.contains("= Chapter 1 \\ Arrival"));
+    assert!(typ.contains("#chapter([Chapter 1])[Arrival]"));
     assert!(typ.contains("*arrived*"));
     assert!(typ.contains("_quiet_"));
     assert!(typ.contains("\\$5")); // typst specials escaped

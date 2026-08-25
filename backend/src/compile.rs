@@ -31,6 +31,8 @@ pub struct CompileSettings {
     pub scene_separator: String,
     pub custom_preamble: String,
     pub format: String,
+    /// Aesthetic preset: modern-novel | classic-manuscript | elegant-book | plain
+    pub template: String,
 }
 
 impl Default for CompileSettings {
@@ -38,8 +40,8 @@ impl Default for CompileSettings {
         CompileSettings {
             title: String::new(),
             author: String::new(),
-            paper: "a4".into(),
-            font_size: 12.0,
+            paper: "a5".into(),
+            font_size: 11.0,
             font_family: String::new(),
             line_spacing: 0.85,
             justify: true,
@@ -50,6 +52,7 @@ impl Default for CompileSettings {
             scene_separator: "* * *".into(),
             custom_preamble: String::new(),
             format: "pdf".into(),
+            template: "modern-novel".into(),
         }
     }
 }
@@ -236,53 +239,153 @@ pub fn md_to_typst(md: &str) -> String {
     out.join("\n")
 }
 
-fn chapter_heading(index: usize, title: &str, numbering: bool) -> String {
+/// `#chapter(eyebrow)[Title]` call for one chapter, per the numbering setting.
+fn chapter_call(index: usize, title: &str, numbering: bool) -> String {
     let title = title.trim();
     match (numbering, title.is_empty()) {
-        (true, false) => format!("= Chapter {} \\ {}", index, esc(title)),
-        (true, true) => format!("= Chapter {}", index),
-        (false, _) => format!("= {}", esc(title)),
+        (true, false) => format!("#chapter([Chapter {}])[{}]", index, esc(title)),
+        (true, true) => format!("#chapter(none)[Chapter {}]", index),
+        (false, _) => format!("#chapter(none)[{}]", esc(title)),
     }
 }
 
 /// Generate the full Typst source for the manuscript.
+///
+/// The default design is a modern minimal novel interior: A5, indent-only
+/// paragraph flow (par spacing = leading, no gaps), understated small-caps
+/// chapter eyebrows over a light title, muted centered scene separators.
 pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -> String {
     let mut doc = String::new();
 
     let paper = match s.paper.as_str() {
-        "a5" => "a5",
+        "a4" => "a4",
         "us-letter" => "us-letter",
-        _ => "a4",
+        _ => "a5",
     };
 
+    // Page numbering starts after the title page (which carries none)
+    let page_numbering = if s.title_page { "none" } else { "\"1\"" };
     doc.push_str(&format!(
-        "#set page(paper: \"{}\", numbering: \"1\", margin: (x: 2.2cm, y: 2.4cm))\n",
-        paper
+        "#set page(paper: \"{}\", numbering: {}, margin: (x: 2cm, top: 2.2cm, bottom: 2.4cm))\n",
+        paper, page_numbering
     ));
+
     if s.font_family.trim().is_empty() {
-        doc.push_str(&format!("#set text(size: {}pt)\n", s.font_size));
+        doc.push_str(&format!("#set text(size: {}pt, lang: \"en\")\n", s.font_size));
     } else {
         doc.push_str(&format!(
-            "#set text(size: {}pt, font: \"{}\")\n",
+            "#set text(size: {}pt, lang: \"en\", font: \"{}\")\n",
             s.font_size,
             esc_string(s.font_family.trim())
         ));
     }
+
+    // Novel paragraph flow: spacing equals leading so paragraphs run
+    // continuously and only the first-line indent marks the break.
     let indent = if s.first_line_indent { ", first-line-indent: 1.2em" } else { "" };
     doc.push_str(&format!(
-        "#set par(justify: {}, leading: {}em{})\n",
-        s.justify, s.line_spacing, indent
+        "#set par(justify: {}, leading: {lead}em, spacing: {lead}em{indent})\n",
+        s.justify,
+        lead = s.line_spacing,
+        indent = indent,
     ));
-    doc.push_str(&format!(
-        "#let sep = align(center)[#v(0.5em)#text(\"{}\")#v(0.5em)]\n",
-        esc_string(&s.scene_separator)
-    ));
-    doc.push_str("#show heading.where(level: 1): it => {\n");
-    if s.chapter_page_breaks {
-        doc.push_str("  pagebreak(weak: true)\n");
+
+    let brk = if s.chapter_page_breaks { "  pagebreak(weak: true)\n" } else { "" };
+    let sep = esc(&s.scene_separator);
+    let title_text = esc(if s.title.trim().is_empty() { "Untitled" } else { s.title.trim() });
+    let author = esc(s.author.trim());
+
+    // Template aesthetics: separator, chapter opener, and title page design.
+    // The inner #heading keeps PDF bookmarks working in every template.
+    let mut title_page = String::new();
+    match s.template.as_str() {
+        "classic-manuscript" => {
+            doc.push_str(&format!(
+                "#let sep = align(center)[#v(1em){}#v(1em)]\n", sep
+            ));
+            doc.push_str(&format!(
+                "#let chapter(eyebrow, title) = {{\n{brk}  v(30%)\n  align(center)[#heading(level: 1)[#upper[#if eyebrow != none [#eyebrow: ] #title]]]\n  v(4em)\n}}\n"
+            ));
+            doc.push_str("#show heading.where(level: 1): it => text(size: 1em, weight: \"bold\", hyphenate: false, it.body)\n");
+            if s.title_page {
+                title_page.push_str(&format!(
+                    "\n#align(center + horizon)[\n  #text(size: 1.4em, weight: \"bold\")[#upper[{}]]",
+                    title_text
+                ));
+                if !author.is_empty() {
+                    title_page.push_str(&format!("\n  #v(1.2em)\n  by {}", author));
+                }
+                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+            }
+        }
+        "elegant-book" => {
+            doc.push_str(&format!(
+                "#let sep = align(center)[#v(1em)#text(fill: luma(130), tracking: 0.5em)[{}]#v(1em)]\n", sep
+            ));
+            doc.push_str(&format!(
+                "#let chapter(eyebrow, title) = {{\n{brk}  v(18%)\n  align(center)[\n    #if eyebrow != none [#text(size: 0.75em, tracking: 0.3em, fill: luma(120))[#upper(eyebrow)] #v(0.9em) #line(length: 18%, stroke: 0.5pt + luma(160)) #v(1.2em)]\n    #heading(level: 1)[#title]\n  ]\n  v(4em)\n}}\n"
+            ));
+            doc.push_str("#show heading.where(level: 1): it => text(size: 1.7em, weight: \"regular\", style: \"italic\", hyphenate: false, it.body)\n");
+            if s.title_page {
+                title_page.push_str(&format!(
+                    "\n#align(center + horizon)[\n  #text(size: 2.3em, style: \"italic\")[{}]",
+                    title_text
+                ));
+                if !author.is_empty() {
+                    title_page.push_str(&format!(
+                        "\n  #v(1.4em)\n  #line(length: 22%, stroke: 0.5pt + luma(150))\n  #v(1.4em)\n  #text(size: 0.9em, tracking: 0.22em, fill: luma(90))[#upper[{}]]",
+                        author
+                    ));
+                }
+                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+            }
+        }
+        "plain" => {
+            doc.push_str(&format!(
+                "#let sep = align(center)[#v(0.7em){}#v(0.7em)]\n", sep
+            ));
+            doc.push_str(&format!(
+                "#let chapter(eyebrow, title) = {{\n{brk}  v(2em)\n  heading(level: 1)[#if eyebrow != none [#eyebrow: ] #title]\n  v(1.2em)\n}}\n"
+            ));
+            doc.push_str("#show heading.where(level: 1): it => text(size: 1.4em, weight: \"bold\", hyphenate: false, it.body)\n");
+            if s.title_page {
+                title_page.push_str(&format!(
+                    "\n#align(center + horizon)[\n  #text(size: 1.8em, weight: \"bold\")[{}]",
+                    title_text
+                ));
+                if !author.is_empty() {
+                    title_page.push_str(&format!("\n  #v(1em)\n  {}", author));
+                }
+                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+            }
+        }
+        _ => {
+            // modern-novel (default): small-caps eyebrow over a light title
+            doc.push_str(&format!(
+                "#let sep = align(center)[#v(0.9em)#text(fill: luma(110), tracking: 0.4em)[{}]#v(0.9em)]\n", sep
+            ));
+            doc.push_str(&format!(
+                "#let chapter(eyebrow, title) = {{\n{brk}  v(16%)\n  align(center)[\n    #if eyebrow != none [#text(size: 0.8em, tracking: 0.22em, fill: luma(110))[#upper(eyebrow)] #v(1.4em)]\n    #heading(level: 1)[#title]\n  ]\n  v(3.5em)\n}}\n"
+            ));
+            doc.push_str("#show heading.where(level: 1): it => text(size: 1.5em, weight: \"medium\", hyphenate: false, it.body)\n");
+            if s.title_page {
+                title_page.push_str(&format!(
+                    "\n#align(center + horizon)[\n  #text(size: 2.1em, weight: \"medium\")[{}]",
+                    title_text
+                ));
+                if !author.is_empty() {
+                    title_page.push_str(&format!(
+                        "\n  #v(1.6em)\n  #text(size: 0.95em, tracking: 0.18em, fill: luma(80))[#upper[{}]]",
+                        author
+                    ));
+                }
+                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+            }
+        }
     }
-    doc.push_str("  v(15%)\n  align(center, text(size: 1.5em, weight: \"bold\", it.body))\n  v(3em)\n}\n");
     doc.push_str("#show heading: set text(hyphenate: false)\n");
+    // In-scene headings: modest, with their own spacing
+    doc.push_str("#show heading.where(level: 2): it => { v(1.2em); text(size: 1.15em, weight: \"semibold\", it.body); v(0.5em) }\n");
 
     if !s.custom_preamble.trim().is_empty() {
         doc.push_str("\n// Custom preamble\n");
@@ -290,20 +393,11 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
         doc.push('\n');
     }
 
-    if s.title_page {
-        doc.push_str(&format!(
-            "\n#align(center + horizon)[#text(size: 2em, weight: \"bold\")[{}]",
-            esc(if s.title.trim().is_empty() { "Untitled" } else { s.title.trim() })
-        ));
-        if !s.author.trim().is_empty() {
-            doc.push_str(&format!(" #v(1.5em) #text(size: 1.2em)[{}]", esc(s.author.trim())));
-        }
-        doc.push_str("]\n#pagebreak()\n");
-    }
+    doc.push_str(&title_page);
 
     for (i, (title, scenes)) in chapters.iter().enumerate() {
         doc.push('\n');
-        doc.push_str(&chapter_heading(i + 1, title, s.numbering));
+        doc.push_str(&chapter_call(i + 1, title, s.numbering));
         doc.push_str("\n\n");
         let bodies: Vec<String> = scenes.iter().map(|md| md_to_typst(md)).collect();
         doc.push_str(&bodies.join("\n\n#sep\n\n"));
@@ -417,10 +511,12 @@ mod tests {
         settings.title = "The Long Night".into();
         settings.author = "K. Author".into();
         let doc = generate_typst(&chapters, &settings);
-        assert!(doc.contains("#set page(paper: \"a4\""));
-        assert!(doc.contains("= Chapter 1 \\ The Gate"));
-        assert!(doc.contains("= Chapter 2\n"));
+        assert!(doc.contains("#set page(paper: \"a5\""));
+        assert!(doc.contains("#chapter([Chapter 1])[The Gate]"));
+        assert!(doc.contains("#chapter(none)[Chapter 2]"));
         assert!(doc.contains("Scene one.\n\n#sep\n\nScene two."));
         assert!(doc.contains("The Long Night"));
+        // Novel flow: paragraph spacing equals leading
+        assert!(doc.contains("leading: 0.85em, spacing: 0.85em"));
     }
 }
