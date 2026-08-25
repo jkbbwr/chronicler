@@ -163,6 +163,93 @@ async function main() {
     await waitFor("session restored", async () =>
       (await evaluate(`[...document.querySelectorAll('.tab')].map(t => t.textContent).join()`)).includes("Alpha.md"));
     step("session restores open tabs", true);
+
+    // -- Smart typography transforms keystrokes
+    await evaluate(`document.querySelector('.cm-content').focus()`);
+    for (const ch of ' "So" -- it... ends') {
+      await send("Input.insertText", { text: ch });
+      await sleep(15);
+    }
+    const typo = await evaluate(`document.querySelector('.cm-content').textContent`);
+    step("smart typography", typo.includes("\u201cSo\u201d") && typo.includes("\u2014") && typo.includes("\u2026"), typo.slice(-30));
+
+    // -- Live preview folds markdown syntax away from the cursor
+    fs.writeFileSync(path.join(project, "Style.md"), "First line here.\n\nShe found **bold courage** within.\n");
+    await sleep(700);
+    await evaluate(`(async () => { const m = await import('/src/stores/workbench.ts'); m.updateSettings({ editorMode: 'live' }); })()`);
+    await evaluate(`(async () => { const m = await import('/src/commands.ts'); m.runCommand('view.quickOpen'); })()`);
+    await sleep(400);
+    await evaluate(`(() => {
+      const input = [...document.querySelectorAll('input')].find(i => i.placeholder.includes('Search files'));
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      set.call(input, 'Style'); input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await sleep(400);
+    await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await waitFor("style tab", async () => (await evaluate(`document.querySelector('.tab.active')?.textContent ?? ''`)).includes("Style"));
+    await sleep(500);
+    const liveText = await evaluate(`[...document.querySelectorAll('.cm-content')].map(c => c.textContent).find(t => t.includes('bold courage')) ?? ''`);
+    step("live preview folds syntax", liveText.includes("bold courage") && !liveText.includes("**"), liveText.slice(0, 50));
+    await evaluate(`(async () => { const m = await import('/src/stores/workbench.ts'); m.updateSettings({ editorMode: 'code' }); })()`);
+
+    // -- Codex: suggest -> promote -> entity list; highlight after reload
+    await evaluate(`window.chronicler.invoke('codex/suggest', { name: 'Alpha', file: 'Alpha.md', line: 1, context: 'Alpha' })`);
+    const cands = await evaluate(`window.chronicler.invoke('codex/candidates').then(r => r.candidates.map(c => c.name).join())`);
+    step("codex suggest lands in inbox", cands.includes("Alpha"));
+    await evaluate(`window.chronicler.invoke('codex/promote', { name: 'Alpha', kind: 'character' })`);
+    const ents = await evaluate(`window.chronicler.invoke('codex/list').then(r => JSON.stringify(r.entities.map(e => [e.name, e.mentionCount])))`);
+    const parsedEnts = JSON.parse(ents);
+    step("codex promote + mention index", parsedEnts.some(([n, m]) => n === "Alpha" && m >= 1), ents);
+    await evaluate(`location.reload()`);
+    await sleep(2500);
+    await connect();
+    await waitFor("entity highlight", async () =>
+      (await evaluate(`[...document.querySelectorAll('.cm-entity-ref')].length`)) >= 1, 10000);
+    step("entity highlighted in editor", true);
+
+    // -- Typed tabs: settings tab survives reload
+    await evaluate(`(async () => { const m = await import('/src/commands.ts'); m.runCommand('view.settings'); })()`);
+    await sleep(400);
+    await evaluate(`location.reload()`);
+    await sleep(2500);
+    await connect();
+    await waitFor("settings tab restored", async () =>
+      (await evaluate(`[...document.querySelectorAll('.tab')].map(t => t.textContent).join()`)).includes("Settings"));
+    step("typed tabs restore (settings)", true);
+
+    // -- Diagnostics (needs downloaded language models; skip cleanly if absent)
+    const diagReady = await evaluate(`window.chronicler.invoke('diag/status').then(r => r.ready)`);
+    if (diagReady) {
+      fs.writeFileSync(path.join(project, "Typos.md"), "She recieved a letter.\n");
+      await sleep(500);
+      const diag = await evaluate(`window.chronicler.invoke('diag/check', { rel_path: 'Typos.md' }).then(r => JSON.stringify(r.files['Typos.md'].map(d => [d.source, d.text])))`);
+      step("diagnostics flag misspelling", diag.includes("recieved"), diag);
+      await evaluate(`window.chronicler.invoke('diag/add_word', { word: 'recieved' })`);
+      const diag2 = await evaluate(`window.chronicler.invoke('diag/check', { rel_path: 'Typos.md' }).then(r => r.files['Typos.md'].length)`);
+      step("dictionary add clears diagnostic", diag2 === 0, `remaining=${diag2}`);
+    } else {
+      console.log("SKIP  diagnostics (language models not downloaded)");
+    }
+
+    // -- Compile to typst source (no external binary needed)
+    const typ = await evaluate(`window.chronicler.invoke('compile/run', {
+      chapters: [{ title: 'Alpha', scenes: ['Alpha.md'] }],
+      settings: { title: 'E2E', format: 'typst' },
+    }).then(r => r.output)`);
+    step("compile emits typst source", typ.endsWith("manuscript.typ"));
+
+    // -- Stats move when words are added
+    const before = await evaluate(`window.chronicler.invoke('stats/get', { today: new Date().toLocaleDateString('sv-SE') }).then(r => r.total)`);
+    fs.appendFileSync(path.join(project, "Alpha.md"), "\nFive more words appear here.\n");
+    await sleep(600);
+    const after = await evaluate(`window.chronicler.invoke('stats/get', { today: new Date().toLocaleDateString('sv-SE') }).then(r => r.total)`);
+    step("stats track added words", after === before + 5, `${before} -> ${after}`);
+
+    // -- Project-wide replace through the app bridge
+    await evaluate(`window.chronicler.invoke('project/replace', { query: 'dragon', replacement: 'wyrm' })`);
+    const replaced = fs.readFileSync(path.join(project, "Alpha.md"), "utf8");
+    step("project replace", !/dragon/i.test(replaced) || replaced.includes("wyrm"), replaced.slice(0, 60));
   } catch (err) {
     step("(aborted)", false, String(err.message ?? err));
   } finally {
