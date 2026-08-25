@@ -53,8 +53,11 @@ function buildDecorations(view: EditorView): DecorationSet {
   const { state } = view;
   const doc = state.doc;
 
-  // An element is "active" (shows raw syntax) when any selection endpoint's
-  // line overlaps it — line granularity matches how Obsidian feels.
+  // Block-level marks (headings, quotes, bullets, rules) reveal when the
+  // cursor's line overlaps them. Inline marks must NOT use line granularity:
+  // a markdown paragraph is one logical line, so the whole paragraph would
+  // de-render while being written. They reveal only when the selection
+  // actually touches the token, like Obsidian.
   const activeLines = new Set<number>();
   for (const range of state.selection.ranges) {
     const fromLine = doc.lineAt(range.from).number;
@@ -69,6 +72,8 @@ function buildDecorations(view: EditorView): DecorationSet {
     }
     return false;
   };
+  const touchesSelection = (from: number, to: number) =>
+    state.selection.ranges.some((r) => r.from <= to && r.to >= from);
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -101,7 +106,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
         if (name === "EmphasisMark") {
           const parent = node.node.parent;
-          if (parent && !isActive(parent.from, parent.to)) {
+          if (parent && !touchesSelection(parent.from, parent.to)) {
             add(node.from, node.to, hide);
           }
           return;
@@ -113,7 +118,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
         if (name === "CodeMark") {
           const parent = node.node.parent;
-          if (parent && parent.name === "InlineCode" && !isActive(parent.from, parent.to)) {
+          if (parent && parent.name === "InlineCode" && !touchesSelection(parent.from, parent.to)) {
             add(node.from, node.to, hide);
           }
           return;
@@ -125,7 +130,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
         if (name === "StrikethroughMark") {
           const parent = node.node.parent;
-          if (parent && !isActive(parent.from, parent.to)) {
+          if (parent && !touchesSelection(parent.from, parent.to)) {
             add(node.from, node.to, hide);
           }
           return;
@@ -137,7 +142,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
         if (name === "LinkMark" || name === "URL") {
           const parent = node.node.parent;
-          if (parent && parent.name === "Link" && !isActive(parent.from, parent.to)) {
+          if (parent && parent.name === "Link" && !touchesSelection(parent.from, parent.to)) {
             add(node.from, node.to, hide);
           }
           return;
