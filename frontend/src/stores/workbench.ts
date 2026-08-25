@@ -45,7 +45,6 @@ export interface EditorSettings {
 
 export interface WorkbenchState {
   zenMode: boolean;
-  isSettingsOpen: boolean;
   isCompileOpen: boolean;
   settings: EditorSettings;
   panels: Record<PanelId, PanelState>;
@@ -73,7 +72,6 @@ const loadSettings = (): EditorSettings => {
 
 export const [workbench, setWorkbench] = createStore<WorkbenchState>({
   zenMode: false,
-  isSettingsOpen: false,
   isCompileOpen: false,
   settings: loadSettings(),
   panels: {

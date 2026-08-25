@@ -1,5 +1,6 @@
 import { type Component, For } from "solid-js";
-import { workbench, setWorkbench, setActiveView, togglePanel } from "../../stores/workbench";
+import { workbench, setActiveView, togglePanel } from "../../stores/workbench";
+import { runCommand } from "../../commands";
 import { Folder, Search, History, Settings } from "lucide-solid";
 
 export const ActivityBar: Component = () => {
@@ -56,7 +57,7 @@ export const ActivityBar: Component = () => {
 
       <div style={{ display: "flex", "flex-direction": "column", gap: "15px" }}>
         <div
-          onClick={() => setWorkbench("isSettingsOpen", true)}
+          onClick={() => runCommand("view.settings")}
           title="Settings"
           style={{ cursor: "pointer", color: "var(--text-muted)", padding: "8px" }}
           onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-main)")}
