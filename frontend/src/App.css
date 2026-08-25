@@ -16,6 +16,7 @@
   --active-bg: #333333;
   --accent: #4a90e2; /* Softer blue */
   --accent-hover: #5ba1f3;
+  --entity: #98c379; /* Codex entity references */
 }
 
 :root[data-theme="midnight"] {
@@ -31,6 +32,7 @@
   --active-bg: #2d333b;
   --accent: #58a6ff;
   --accent-hover: #79b8ff;
+  --entity: #7ee787;
 }
 
 :root[data-theme="light"] {
@@ -46,6 +48,7 @@
   --active-bg: #e0e0e0;
   --accent: #3671c8;
   --accent-hover: #2a5ea8;
+  --entity: #2d7d3a;
 }
 
 :root[data-theme="sepia"] {
@@ -61,6 +64,7 @@
   --active-bg: #e2d4b4;
   --accent: #a5673f;
   --accent-hover: #8e5533;
+  --entity: #5a7d35;
 }
 
 :root[data-theme="light"] ::-webkit-scrollbar-thumb,

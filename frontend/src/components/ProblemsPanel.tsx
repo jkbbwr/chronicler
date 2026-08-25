@@ -121,22 +121,25 @@ export const ProblemsPanel: Component<ProblemsPanelProps> = (props) => {
                           <span style={{ color: "var(--text-faint)" }}> — try {d.replacements!.slice(0, 3).join(", ")}</span>
                         </Show>
                       </span>
-                      <Show when={d.source === "spelling"}>
-                        <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onAddWord(d); }} title="Add to project dictionary">
-                          + Dictionary
-                        </button>
-                      </Show>
-                      <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, false); }} title={d.source === "spelling" ? "Ignore this word in this file" : "Ignore this rule at this text in this file"}>
-                        Ignore
-                      </button>
-                      <Show when={d.source === "grammar"}>
-                        <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, true); }} title="Disable this grammar rule everywhere">
-                          Disable rule
-                        </button>
-                      </Show>
-                      <span style={{ color: "var(--text-faint)", "flex-shrink": 0, "font-size": "11px" }}>
+                      <span style={{ color: "var(--text-faint)", "flex-shrink": 0, "font-size": "11px", "text-align": "right" }}>
                         {d.file}:{d.line}
                       </span>
+                      {/* Fixed-width action column keeps buttons aligned across rows */}
+                      <div style={{ display: "flex", gap: "6px", "justify-content": "flex-end", width: "185px", "flex-shrink": 0 }}>
+                        <Show when={d.source === "spelling"}>
+                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onAddWord(d); }} title="Add to project dictionary">
+                            + Dictionary
+                          </button>
+                        </Show>
+                        <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, false); }} title={d.source === "spelling" ? "Ignore this word in this file" : "Ignore this rule at this text in this file"}>
+                          Ignore
+                        </button>
+                        <Show when={d.source === "grammar"}>
+                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, true); }} title="Disable this grammar rule everywhere">
+                            Disable rule
+                          </button>
+                        </Show>
+                      </div>
                     </div>
                   )}
                 </For>

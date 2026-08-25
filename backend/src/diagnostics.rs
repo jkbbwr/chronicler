@@ -179,6 +179,35 @@ fn strip_word(w: &str) -> &str {
     w.trim_matches(|c: char| c == '\'' || c == '\u{2019}')
 }
 
+/// Blank out `<!-- ... -->` regions (state carries across lines) so comments
+/// are never spell/grammar checked. Char count is preserved for offsets.
+fn mask_html_comments(line: &str, in_comment: &mut bool) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = vec![' '; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        if *in_comment {
+            if chars[i] == '-' && chars.get(i + 1) == Some(&'-') && chars.get(i + 2) == Some(&'>') {
+                *in_comment = false;
+                i += 3;
+            } else {
+                i += 1;
+            }
+        } else if chars[i] == '<'
+            && chars.get(i + 1) == Some(&'!')
+            && chars.get(i + 2) == Some(&'-')
+            && chars.get(i + 3) == Some(&'-')
+        {
+            *in_comment = true;
+            i += 4;
+        } else {
+            out[i] = chars[i];
+            i += 1;
+        }
+    }
+    out.into_iter().collect()
+}
+
 pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
     let path = crate::resolve_path(root, rel)?;
     let content = std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?;
@@ -188,16 +217,23 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
     with_engines(|engines| {
         let mut diags: Vec<Value> = Vec::new();
         let mut in_fence = false;
+        let mut in_comment = false;
 
-        for (line_no, line) in content.lines().enumerate() {
-            let trimmed = line.trim_start();
+        for (line_no, raw_line) in content.lines().enumerate() {
+            let trimmed = raw_line.trim_start();
             if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
                 in_fence = !in_fence;
                 continue;
             }
-            if in_fence || !checkable_line(line) {
+            if in_fence || !checkable_line(raw_line) {
                 continue;
             }
+            let masked = mask_html_comments(raw_line, &mut in_comment);
+            let line = masked.as_str();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let trimmed = line.trim_start();
 
             // ---- Spelling: per word, skipping markdown-ish tokens ----
             let chars: Vec<char> = line.chars().collect();
@@ -260,8 +296,9 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
                     .unwrap_or_default();
                 let rule_id = suggestion.source().to_string();
                 // Straight quotes/apostrophes are how markdown drafts are
-                // typed — smart-quote nagging is noise, not grammar.
-                if rule_id.starts_with("TYPOGRAPHY/EN_QUOTES") {
+                // typed — smart-quote nagging is noise, not grammar. And
+                // whitespace nags misfire on comment-masked gaps.
+                if rule_id.starts_with("TYPOGRAPHY/EN_QUOTES") || rule_id.contains("WHITESPACE") {
                     continue;
                 }
                 if suppressed.contains(&(rule_id.clone(), rel.into(), text.clone()))

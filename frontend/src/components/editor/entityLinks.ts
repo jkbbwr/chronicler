@@ -57,8 +57,8 @@ function findSpans(lineText: string, lineFrom: number, refs: EntityRef[]): Span[
 
 const entityTheme = EditorView.baseTheme({
   ".cm-entity-ref": {
-    color: "var(--accent, #4a90e2)",
-    borderBottom: "1px dotted color-mix(in srgb, var(--accent, #4a90e2) 45%, transparent)",
+    color: "var(--entity, #98c379)",
+    borderBottom: "1px dotted color-mix(in srgb, var(--entity, #98c379) 45%, transparent)",
   },
   ".cm-entity-ref:hover": {
     borderBottomStyle: "solid",
@@ -96,9 +96,9 @@ const entityTheme = EditorView.baseTheme({
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: "0.7px",
-    color: "var(--accent, #4a90e2)",
-    border: "1px solid color-mix(in srgb, var(--accent, #4a90e2) 40%, transparent)",
-    backgroundColor: "color-mix(in srgb, var(--accent, #4a90e2) 10%, transparent)",
+    color: "var(--entity, #98c379)",
+    border: "1px solid color-mix(in srgb, var(--entity, #98c379) 40%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--entity, #98c379) 10%, transparent)",
     borderRadius: "9px",
     padding: "2px 8px",
   },
