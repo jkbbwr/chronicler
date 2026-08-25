@@ -478,10 +478,14 @@ async fn handle_request_line(
                 )
                 .await
                 {
-                    Ok(text) => Ok(json!({ "text": text })),
+                    Ok((text, stopped)) => Ok(json!({ "text": text, "stopped": stopped })),
                     Err(e) => Err(rpc_err(e)),
                 }
             }
+        }
+        "agents/stop" => {
+            let id = req.params["id"].as_str().unwrap_or("");
+            Ok(json!({ "stopped": agents::stop_chat(id) }))
         }
         "agents/fill" => {
             let id = req.params["id"].as_i64().unwrap_or(-1);

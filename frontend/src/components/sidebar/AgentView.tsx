@@ -1,6 +1,6 @@
 import { type Component, createSignal, For, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { Send, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
+import { Send, Square, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
 import { parseSceneHref, renderMarkdown } from "../../lib/markdown";
 
 // Chronicler's writing agent panel. Chat streams token-by-token; the
@@ -27,6 +27,33 @@ const [thread, setThread] = createStore<{ msgs: ChatMsg[]; runId: string | null 
 });
 
 let onThreadUpdate: (() => void) | null = null;
+
+// ---- Persistence: the thread survives restarts, per project (db KV) ----
+let loadedFor: string | null = null;
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+
+const persistThread = () => {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(async () => {
+    try {
+      const msgs = thread.msgs.filter((m) => !m.streaming).map((m) => ({ ...m, tools: m.tools }));
+      await window.chronicler.invoke("db/set", { key: "agentThread", value: JSON.stringify(msgs) });
+    } catch { /* backend restarting */ }
+  }, 300);
+};
+
+const loadThread = async () => {
+  try {
+    const project = await window.chronicler.getProject();
+    if (!project.path || loadedFor === project.path) return;
+    loadedFor = project.path;
+    const res = await window.chronicler.invoke("db/get", { key: "agentThread" });
+    if (res.value) {
+      const msgs = JSON.parse(res.value);
+      if (Array.isArray(msgs)) setThread("msgs", msgs);
+    }
+  } catch { /* fresh thread */ }
+};
 
 /** Routed here from the app-level backend event listener. */
 export const handleRigEvent = (method: string, params: any) => {
@@ -85,7 +112,10 @@ export const AgentView: Component<AgentViewProps> = (props) => {
       setRagStatus(await window.chronicler.invoke("agents/status"));
     } catch { /* backend restarting */ }
   };
-  onMount(refreshRag);
+  onMount(() => {
+    refreshRag();
+    loadThread();
+  });
 
   const runIndex = async () => {
     setIndexing(true);
@@ -136,14 +166,26 @@ export const AgentView: Component<AgentViewProps> = (props) => {
         context,
         attach: attached(),
       });
-      setThread("msgs", idx, { content: res.text, streaming: false });
+      setThread("msgs", idx, {
+        content: res.stopped && !res.text ? "*(stopped before replying)*" : res.text,
+        streaming: false,
+      });
     } catch (err: any) {
       setThread("msgs", idx, { content: err.message, error: true, streaming: false });
     } finally {
       setBusy(false);
       setThread("runId", null);
       scrollDown();
+      persistThread();
     }
+  };
+
+  const stop = async () => {
+    const id = thread.runId;
+    if (!id) return;
+    try {
+      await window.chronicler.invoke("agents/stop", { id });
+    } catch { /* already finished */ }
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -276,23 +318,41 @@ export const AgentView: Component<AgentViewProps> = (props) => {
             onClick={() => (picking() ? setPicking(false) : openPicker())}
           />
           <div style={{ flex: 1 }} />
-          <Show when={thread.msgs.length > 0}>
+          <Show when={thread.msgs.length > 0 && !busy()}>
             <Trash2
               size={14} color="var(--text-faint)" style={{ cursor: "pointer" }}
-              onClick={() => setThread({ msgs: [], runId: null })}
+              onClick={() => { setThread({ msgs: [], runId: null }); persistThread(); }}
             />
           </Show>
-          <button
-            onClick={send} disabled={busy() || !draft().trim()}
-            title="Send"
-            style={{
-              display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
-              background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px",
-              cursor: "pointer", "font-size": "12px", opacity: busy() || !draft().trim() ? 0.5 : 1,
-            }}
+          <Show
+            when={busy()}
+            fallback={
+              <button
+                onClick={send} disabled={!draft().trim()}
+                title="Send"
+                style={{
+                  display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
+                  background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px",
+                  cursor: "pointer", "font-size": "12px", opacity: !draft().trim() ? 0.5 : 1,
+                }}
+              >
+                <Send size={12} /> Send
+              </button>
+            }
           >
-            <Send size={12} /> Send
-          </button>
+            <button
+              onClick={stop}
+              title="Stop the reply"
+              style={{
+                display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
+                background: "transparent", color: "var(--text-main)",
+                border: "1px solid var(--border-color)", "border-radius": "6px",
+                cursor: "pointer", "font-size": "12px",
+              }}
+            >
+              <Square size={11} fill="currentColor" /> Stop
+            </button>
+          </Show>
         </div>
 
         {/* RAG index status */}

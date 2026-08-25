@@ -10,8 +10,10 @@ use rig_core::embeddings::EmbeddingModel;
 use rig_core::providers::{openai, openrouter};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tokio::sync::mpsc;
+use std::sync::{Mutex, OnceLock};
+use tokio::sync::{mpsc, oneshot};
 
 // The rig's agent core, built on the `rig` crates: provider clients,
 // manuscript RAG embeddings, tools the model can call (semantic search,
@@ -449,9 +451,42 @@ fn build_preamble(root: &Path, context: Option<&str>, attach: &[String]) -> Stri
     preamble
 }
 
+/// Live chat runs by id, so the writer can stop one mid-stream.
+static RUNNING: OnceLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = OnceLock::new();
+
+fn running() -> &'static Mutex<HashMap<String, oneshot::Sender<()>>> {
+    RUNNING.get_or_init(Default::default)
+}
+
+/// Stop a running chat by id. Returns whether anything was running.
+pub fn stop_chat(id: &str) -> bool {
+    running().lock().unwrap().remove(id).is_some_and(|cancel| cancel.send(()).is_ok())
+}
+
+/// A chat run's entry in the cancellation registry; deregisters on drop, so
+/// completion, stop, and error all clean up the same way.
+struct RunHandle {
+    id: String,
+    cancelled: oneshot::Receiver<()>,
+}
+
+impl RunHandle {
+    fn register(id: &str) -> Self {
+        let (cancel, cancelled) = oneshot::channel();
+        running().lock().unwrap().insert(id.to_string(), cancel);
+        RunHandle { id: id.to_string(), cancelled }
+    }
+}
+
+impl Drop for RunHandle {
+    fn drop(&mut self) {
+        running().lock().unwrap().remove(&self.id);
+    }
+}
+
 /// Run one rig conversation turn with streaming. Emits agents/delta, agents/tool,
 /// agents/tool_done, and agents/error notifications tagged with `id`; returns the
-/// full assistant text when the run completes.
+/// full assistant text (and whether the writer stopped it) when the run ends.
 pub async fn run_chat(
     root: &Path,
     tx: mpsc::Sender<String>,
@@ -459,46 +494,44 @@ pub async fn run_chat(
     messages: &[Value],
     context: Option<&str>,
     attach: &[String],
-) -> Result<String> {
+) -> Result<(String, bool)> {
     use futures::StreamExt;
+    use MultiTurnStreamItem as Item;
+    use StreamedAssistantContent as Content;
 
-    let (prompt_text, history) = split_messages(messages)?;
-    let preamble = build_preamble(root, context, attach);
-    let agent = build_agent(root, &preamble)?;
-
-    let mut stream = agent.stream_chat(Message::user(prompt_text), history).max_turns(8).await;
+    let (prompt, history) = split_messages(messages)?;
+    let agent = build_agent(root, &build_preamble(root, context, attach))?;
+    let mut run = RunHandle::register(&id);
+    let mut stream = agent.stream_chat(Message::user(prompt), history).max_turns(8).await;
 
     let mut text = String::new();
-    while let Some(item) = stream.next().await {
+    loop {
+        let item = tokio::select! {
+            _ = &mut run.cancelled => return Ok((text, true)),
+            item = stream.next() => match item {
+                Some(item) => item,
+                None => return Ok((text, false)),
+            },
+        };
         match item {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
+            Ok(Item::StreamAssistantItem(Content::Text(t))) => {
                 text.push_str(&t.text);
                 notify(&tx, "agents/delta", json!({ "id": id, "text": t.text })).await;
             }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall {
-                tool_call,
-                ..
-            })) => {
-                notify(
-                    &tx,
-                    "agents/tool",
-                    json!({ "id": id, "name": tool_call.function.name, "args": tool_call.function.arguments }),
-                )
-                .await;
+            Ok(Item::StreamAssistantItem(Content::ToolCall { tool_call, .. })) => {
+                let params = json!({ "id": id, "name": tool_call.function.name, "args": tool_call.function.arguments });
+                notify(&tx, "agents/tool", params).await;
             }
-            Ok(MultiTurnStreamItem::ToolExecutionCommitted { tool_call, .. }) => {
-                notify(&tx, "agents/tool_done", json!({ "id": id, "name": tool_call.function.name }))
-                    .await;
+            Ok(Item::ToolExecutionCommitted { tool_call, .. }) => {
+                notify(&tx, "agents/tool_done", json!({ "id": id, "name": tool_call.function.name })).await;
             }
             Ok(_) => {}
             Err(e) => {
-                let msg = format!("{}", e);
-                notify(&tx, "agents/error", json!({ "id": id, "message": msg })).await;
-                bail!("model stream failed: {}", msg);
+                notify(&tx, "agents/error", json!({ "id": id, "message": e.to_string() })).await;
+                bail!("model stream failed: {e}");
             }
         }
     }
-    Ok(text)
 }
 
 // ---------- Field filling (codex "draft from manuscript") ----------

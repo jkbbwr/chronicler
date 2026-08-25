@@ -99,7 +99,7 @@ fn convert_inline(text: &str) -> String {
     let italic_under = ITALIC_UNDER.get_or_init(|| Regex::new(r"\b_([^_\n]+)_\b").unwrap());
 
     let mut stash: Vec<String> = Vec::new();
-    let mut keep = |s: String, stash: &mut Vec<String>| -> String {
+    let keep = |s: String, stash: &mut Vec<String>| -> String {
         stash.push(s);
         format!("\u{e000}{}\u{e001}", stash.len() - 1)
     };

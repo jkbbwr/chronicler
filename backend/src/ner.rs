@@ -188,7 +188,7 @@ fn run_line(model: &mut NerModel, line: &str) -> Result<Vec<(String, String)>> {
     // Pass 2: standard BIO merge over whole words
     let mut results: Vec<(String, String)> = Vec::new();
     let mut current: Option<(usize, usize, String)> = None;
-    let mut close = |cur: &mut Option<(usize, usize, String)>, out: &mut Vec<(String, String)>| {
+    let close = |cur: &mut Option<(usize, usize, String)>, out: &mut Vec<(String, String)>| {
         if let Some((s, e, l)) = cur.take() {
             out.push((line[s..e].to_string(), l));
         }

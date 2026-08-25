@@ -26,7 +26,7 @@ pub fn count_words(content: &str) -> usize {
         // Cheap comment masking with cross-line state
         let mut token = String::new();
         let mut chars = line.chars().peekable();
-        let mut flush = |t: &mut String, count: &mut usize| {
+        let flush = |t: &mut String, count: &mut usize| {
             if t.chars().any(|c| c.is_alphanumeric()) {
                 *count += 1;
             }
