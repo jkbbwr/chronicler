@@ -4,6 +4,7 @@ import { workbench, setWorkbench, updateSettings, type EditorMode } from "./stor
 import { EditorView, type EditorApi } from "./components/editor/EditorView";
 import { type EntityRef } from "./components/editor/entityLinks";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
+import { AgentView } from "./components/sidebar/AgentView";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { OutlinerView } from "./components/sidebar/OutlinerView";
@@ -756,6 +757,7 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
+    { id: "rig.open", title: "Rig: Open Assistant", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
     { id: "view.indexCards", title: "View: Index Cards", keybinding: "Mod+Shift+I", run: openCardsTab },
     {
@@ -1091,7 +1093,15 @@ const App: Component = () => {
                     />
                   )}
                   {workbench.panels.right.activeView === "agent" && (
-                    <div style={{ padding: "15px", color: "var(--text-faint)", "font-size": "12px" }}>Rig AI Agent — coming soon</div>
+                    <AgentView
+                      activeScene={() => {
+                        const f = activeFile();
+                        const t = f ? getFileTab(f) : undefined;
+                        return t ? { file: f!, content: t.content ?? "" } : null;
+                      }}
+                      onStatus={setStatus}
+                      onOpenSettings={openSettingsTab}
+                    />
                   )}
                 </div>
               </div>

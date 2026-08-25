@@ -36,17 +36,31 @@ const Row: Component<{ name: string; hint?: string; children: any }> = (props) =
 );
 
 export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props) => {
-  const [ai, setAi] = createStore({ provider: "anthropic", model: "claude-opus-5", baseUrl: "", enabled: false, hasKey: false });
+  const [ai, setAi] = createStore({ provider: "openrouter", model: "openrouter/auto", baseUrl: "", enabled: false, hasKey: false });
   const [keyDraft, setKeyDraft] = createSignal("");
+  const [models, setModels] = createSignal<string[]>([]);
+  const [testResult, setTestResult] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [testing, setTesting] = createSignal(false);
 
   onMount(() => {
-    window.chronicler.invoke("ai/config").then((cfg: any) => setAi(cfg)).catch(() => {});
+    window.chronicler.invoke("ai/config").then((cfg: any) => { setAi(cfg); loadModels(); }).catch(() => {});
   });
+
+  const loadModels = async () => {
+    try {
+      const res = await window.chronicler.invoke("ai/models");
+      setModels(res.models ?? []);
+    } catch {
+      setModels([]); // no key / unreachable — the model field still takes free text
+    }
+  };
 
   const saveAi = async (patch: Partial<typeof ai>) => {
     setAi(patch as any);
+    setTestResult(null);
     try {
       await window.chronicler.invoke("ai/config_set", { ...ai });
+      if ("provider" in patch || "baseUrl" in patch) loadModels();
     } catch (err: any) {
       props.onStatus(`AI settings save failed: ${err.message}`);
     }
@@ -58,9 +72,24 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
       await window.chronicler.aiStoreKey(value);
       setAi("hasKey", !!value);
       setKeyDraft("");
+      setTestResult(null);
       props.onStatus(value ? "API key stored" : "API key cleared");
+      loadModels();
     } catch (err: any) {
       props.onStatus(`Key store failed: ${err.message}`);
+    }
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await window.chronicler.invoke("ai/test");
+      setTestResult({ ok: true, text: `Connected — ${ai.model} replied: “${(res.reply ?? "").trim().slice(0, 60)}”` });
+    } catch (err: any) {
+      setTestResult({ ok: false, text: err.message });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -122,34 +151,49 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
         </Section>
 
         <Section title="AI">
-          <Row name="Provider" hint="Powers codex extraction; more uses to come.">
+          <Row name="Provider" hint="Powers the rig (Agent panel) and codex extraction.">
             <select style={input} value={ai.provider} onChange={(e) => saveAi({ provider: e.currentTarget.value })}>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="openai">OpenAI</option>
-              <option value="ollama">Ollama (local)</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai-compat">OpenAI Compatible</option>
             </select>
           </Row>
-          <Row name="Model">
-            <input style={input} type="text" value={ai.model} onChange={(e) => saveAi({ model: e.currentTarget.value })} />
-          </Row>
-          <Row name="Base URL" hint="Optional — proxies or a remote Ollama.">
-            <input style={input} type="text" placeholder="provider default" value={ai.baseUrl} onChange={(e) => saveAi({ baseUrl: e.currentTarget.value })} />
-          </Row>
-          <Show when={ai.provider !== "ollama"}>
-            <Row name="API key" hint={ai.hasKey ? "A key is stored (OS-keychain encrypted). Enter a new one to replace it, or store empty to clear." : "Encrypted with the OS keychain; held in memory only by the local backend."}>
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input
-                  style={input} type="password"
-                  placeholder={ai.provider === "anthropic" ? "sk-ant-..." : "sk-..."}
-                  value={keyDraft()}
-                  onInput={(e) => setKeyDraft(e.currentTarget.value)}
-                />
-                <button onClick={saveKey} style={{ padding: "0 18px", background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
-                  Store
-                </button>
-              </div>
+          <Show when={ai.provider === "openai-compat"}>
+            <Row name="Base URL" hint="The server's /v1 root — e.g. https://api.openai.com/v1 or http://localhost:11434/v1 for Ollama.">
+              <input style={input} type="text" placeholder="http://localhost:11434/v1" value={ai.baseUrl} onChange={(e) => saveAi({ baseUrl: e.currentTarget.value })} />
             </Row>
           </Show>
+          <Row name="Model" hint={models().length > 0 ? `${models().length} models loaded from the provider — type to search.` : "Free text; the list loads once the provider is reachable."}>
+            <input style={input} type="text" list="ai-model-list" value={ai.model} onChange={(e) => saveAi({ model: e.currentTarget.value })} />
+            <datalist id="ai-model-list">
+              <For each={models()}>{(m) => <option value={m} />}</For>
+            </datalist>
+          </Row>
+          <Row name="API key" hint={ai.hasKey ? "A key is stored (OS-keychain encrypted). Enter a new one to replace it, or store empty to clear." : ai.provider === "openrouter" ? "Required. Encrypted with the OS keychain; held in memory only by the local backend." : "Optional — local servers usually run without one."}>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <input
+                style={input} type="password"
+                placeholder={ai.provider === "openrouter" ? "sk-or-..." : "sk-... (optional)"}
+                value={keyDraft()}
+                onInput={(e) => setKeyDraft(e.currentTarget.value)}
+              />
+              <button onClick={saveKey} style={{ padding: "0 18px", background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
+                Store
+              </button>
+            </div>
+          </Row>
+          <Row name="Connection" hint="Sends one tiny completion with the settings above.">
+            <div style={{ display: "flex", gap: "10px", "align-items": "center" }}>
+              <button
+                onClick={testConnection} disabled={testing()}
+                style={{ padding: "8px 18px", background: "var(--panel-bg)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}
+              >
+                {testing() ? "Testing..." : "Test connection"}
+              </button>
+              <Show when={testResult()}>
+                <span style={{ "font-size": "12.5px", color: testResult()!.ok ? "#98c379" : "#e06c75" }}>{testResult()!.text}</span>
+              </Show>
+            </div>
+          </Row>
           <Row name="Auto-scan" hint="Runs the LLM pass on changed scenes when NER finds new names. Debounced; costs tokens.">
             <label style={{ display: "flex", gap: "8px", "align-items": "center", color: "var(--text-main)", "font-size": "13px", cursor: "pointer" }}>
               <input type="checkbox" checked={ai.enabled} onChange={(e) => saveAi({ enabled: e.currentTarget.checked })} />

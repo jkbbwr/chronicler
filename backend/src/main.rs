@@ -479,12 +479,31 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         },
         "ai/config_set" => {
             let cfg = ai::AiConfig {
-                provider: req.params["provider"].as_str().unwrap_or("anthropic").to_string(),
-                model: req.params["model"].as_str().unwrap_or("claude-opus-5").to_string(),
+                provider: req.params["provider"].as_str().unwrap_or("openrouter").to_string(),
+                model: req.params["model"].as_str().unwrap_or("openrouter/auto").to_string(),
                 base_url: req.params["baseUrl"].as_str().unwrap_or("").to_string(),
                 enabled: req.params["enabled"].as_bool().unwrap_or(false),
             };
             ai::save_config(root, cfg).map(|_| json!({ "success": true })).map_err(rpc_err)
+        },
+        "ai/models" => match ai::list_models(&ai::load_config(root)).await {
+            Ok(models) => Ok(json!({ "models": models })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "ai/test" => match ai::test_connection(root).await {
+            Ok(reply) => Ok(json!({ "ok": true, "reply": reply })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "ai/chat" => {
+            let messages = req.params["messages"].as_array().cloned().unwrap_or_default();
+            if messages.is_empty() {
+                Err((-32000, "Missing param: messages".to_string()))
+            } else {
+                match ai::rig_chat(root, &messages, req.params["context"].as_str()).await {
+                    Ok(text) => Ok(json!({ "text": text })),
+                    Err(e) => Err(rpc_err(e)),
+                }
+            }
         },
         "ai/set_key" => {
             ai::set_key(req.params["key"].as_str().unwrap_or(""));

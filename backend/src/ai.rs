@@ -4,23 +4,25 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::RwLock;
 
-// Provider-pluggable LLM layer for codex extraction. Providers speak their
-// native HTTP APIs; the extraction contract is shared: given prose and the
-// list of already-known entities, return NEW entities as strict JSON.
+// LLM layer for the rig (assistant) and codex extraction. Two providers,
+// both speaking the OpenAI chat-completions shape:
+//   - openrouter:    https://openrouter.ai/api/v1 (key required)
+//   - openai-compat: any compatible server via base_url (OpenAI, Ollama's
+//                    /v1, LM Studio, vLLM, ...); key optional for local.
 
 #[derive(Clone)]
 pub struct AiConfig {
-    pub provider: String, // "anthropic" | "openai" | "ollama"
+    pub provider: String, // "openrouter" | "openai-compat"
     pub model: String,
-    pub base_url: String, // empty = provider default
+    pub base_url: String, // required for openai-compat; override for openrouter
     pub enabled: bool,    // auto-scan after NER finds new names
 }
 
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
-            provider: "anthropic".into(),
-            model: "claude-opus-5".into(),
+            provider: "openrouter".into(),
+            model: "openrouter/auto".into(),
             base_url: String::new(),
             enabled: false,
         }
@@ -40,12 +42,18 @@ pub fn load_config(root: &Path) -> AiConfig {
         .flatten()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .map(|v| AiConfig {
-            provider: v["provider"].as_str().unwrap_or("anthropic").to_string(),
-            model: v["model"].as_str().unwrap_or("claude-opus-5").to_string(),
+            provider: v["provider"].as_str().unwrap_or("openrouter").to_string(),
+            model: v["model"].as_str().unwrap_or("openrouter/auto").to_string(),
             base_url: v["baseUrl"].as_str().unwrap_or("").to_string(),
             enabled: v["enabled"].as_bool().unwrap_or(false),
         })
         .unwrap_or_default();
+    // Configs from before the provider rework reset to defaults
+    let cfg = if matches!(cfg.provider.as_str(), "openrouter" | "openai-compat") {
+        cfg
+    } else {
+        AiConfig::default()
+    };
     STATE.write().unwrap().0 = Some(cfg.clone());
     cfg
 }
@@ -80,7 +88,116 @@ fn key() -> Option<String> {
 
 pub fn auto_scan_ready(root: &Path) -> bool {
     let cfg = load_config(root);
-    cfg.enabled && (cfg.provider == "ollama" || has_key())
+    // Local openai-compat servers commonly run keyless
+    cfg.enabled && (has_key() || cfg.provider == "openai-compat")
+}
+
+/// Resolve the API base (".../v1", no trailing slash) for the configured provider.
+fn api_base(cfg: &AiConfig) -> Result<String> {
+    let base = match cfg.provider.as_str() {
+        "openrouter" => {
+            if cfg.base_url.is_empty() { "https://openrouter.ai/api/v1".to_string() } else { cfg.base_url.clone() }
+        }
+        "openai-compat" => {
+            if cfg.base_url.is_empty() {
+                bail!("OpenAI-compatible provider needs a base URL (e.g. https://api.openai.com/v1 or http://localhost:11434/v1)");
+            }
+            cfg.base_url.clone()
+        }
+        other => bail!("Unknown AI provider: {}", other),
+    };
+    Ok(base.trim_end_matches('/').to_string())
+}
+
+fn auth_key(cfg: &AiConfig) -> Result<Option<String>> {
+    match key() {
+        Some(k) => Ok(Some(k)),
+        None if cfg.provider == "openai-compat" => Ok(None), // local servers
+        None => bail!("No API key set — add one in Settings → AI"),
+    }
+}
+
+/// One chat-completions round trip. `messages` are OpenAI-shaped
+/// [{"role": "user"|"assistant", "content": "..."}] turns.
+pub async fn chat(cfg: &AiConfig, system: &str, messages: &[Value]) -> Result<String> {
+    let base = api_base(cfg)?;
+    let mut all = vec![json!({ "role": "system", "content": system })];
+    all.extend(messages.iter().cloned());
+
+    let mut req = reqwest::Client::new()
+        .post(format!("{}/chat/completions", base))
+        .json(&json!({ "model": cfg.model, "messages": all }));
+    if let Some(k) = auth_key(cfg)? {
+        req = req.bearer_auth(k);
+    }
+    if cfg.provider == "openrouter" {
+        // Attribution headers OpenRouter asks apps to send
+        req = req.header("X-Title", "Chronicler");
+    }
+
+    let resp = req.send().await.with_context(|| format!("calling {}", base))?;
+    let status = resp.status();
+    let body: Value = resp.json().await.context("reading model response")?;
+    if !status.is_success() || body["error"].is_object() {
+        let msg = body["error"]["message"].as_str().unwrap_or("unknown error");
+        bail!("AI provider error ({}): {}", status, msg);
+    }
+    let text = body["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+    if text.is_empty() {
+        bail!("model returned an empty response");
+    }
+    Ok(text)
+}
+
+async fn complete(cfg: &AiConfig, system: &str, user: &str) -> Result<String> {
+    chat(cfg, system, &[json!({ "role": "user", "content": user })]).await
+}
+
+/// List model ids from the provider's /models endpoint.
+pub async fn list_models(cfg: &AiConfig) -> Result<Vec<String>> {
+    let base = api_base(cfg)?;
+    let mut req = reqwest::Client::new().get(format!("{}/models", base));
+    if let Some(k) = auth_key(cfg)? {
+        req = req.bearer_auth(k);
+    }
+    let resp = req.send().await.with_context(|| format!("calling {}/models", base))?;
+    let status = resp.status();
+    let body: Value = resp.json().await.context("reading model list")?;
+    if !status.is_success() {
+        let msg = body["error"]["message"].as_str().unwrap_or("unknown error");
+        bail!("AI provider error ({}): {}", status, msg);
+    }
+    let mut ids: Vec<String> = body["data"]
+        .as_array()
+        .map(|models| models.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    ids.sort();
+    Ok(ids)
+}
+
+/// Cheap round trip to prove the config works. Returns the model's reply.
+pub async fn test_connection(root: &Path) -> Result<String> {
+    let cfg = load_config(root);
+    complete(&cfg, "You are a connection test.", "Reply with the single word: ok").await
+}
+
+const RIG_SYSTEM: &str = "You are the rig — the writing assistant built into Chronicler, an IDE for \
+fiction. You help with drafting, revision, continuity, and craft. Be direct and concrete; quote the \
+writer's own words when discussing them. Never rewrite wholesale unless asked — suggest, don't replace. \
+Plain prose only unless the writer asks for markdown structure.";
+
+/// One rig conversation turn. `context` is optional working-state the
+/// frontend chooses to attach (e.g. the scene being edited).
+pub async fn rig_chat(root: &Path, messages: &[Value], context: Option<&str>) -> Result<String> {
+    let cfg = load_config(root);
+    let system = match context {
+        Some(ctx) if !ctx.trim().is_empty() => {
+            let ctx: String = ctx.chars().take(24_000).collect();
+            format!("{}\n\n{}", RIG_SYSTEM, ctx)
+        }
+        _ => RIG_SYSTEM.to_string(),
+    };
+    chat(&cfg, &system, messages).await
 }
 
 const EXTRACTION_INSTRUCTION: &str = "You are an entity extractor for a fiction writer's world bible. \
@@ -98,94 +215,6 @@ fn build_prompt(content: &str, known: &[String]) -> String {
         if known.is_empty() { "(none)".to_string() } else { known.join(", ") },
         text
     )
-}
-
-async fn complete(cfg: &AiConfig, system: &str, user: &str) -> Result<String> {
-    let client = reqwest::Client::new();
-    match cfg.provider.as_str() {
-        "anthropic" => {
-            let base = if cfg.base_url.is_empty() { "https://api.anthropic.com" } else { &cfg.base_url };
-            let key = key().context("no API key set for Anthropic")?;
-            let resp = client
-                .post(format!("{}/v1/messages", base))
-                .header("x-api-key", key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&json!({
-                    "model": cfg.model,
-                    "max_tokens": 16000,
-                    "system": system,
-                    "messages": [{ "role": "user", "content": user }],
-                }))
-                .send()
-                .await
-                .context("calling Anthropic API")?;
-            let status = resp.status();
-            let body: Value = resp.json().await.context("reading Anthropic response")?;
-            if !status.is_success() {
-                bail!("Anthropic API error ({}): {}", status, body["error"]["message"].as_str().unwrap_or("unknown"));
-            }
-            if body["stop_reason"] == "refusal" {
-                bail!("Anthropic API declined the request (refusal)");
-            }
-            let text: String = body["content"]
-                .as_array()
-                .map(|blocks| {
-                    blocks
-                        .iter()
-                        .filter(|b| b["type"] == "text")
-                        .filter_map(|b| b["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("")
-                })
-                .unwrap_or_default();
-            Ok(text)
-        }
-        "openai" => {
-            let base = if cfg.base_url.is_empty() { "https://api.openai.com" } else { &cfg.base_url };
-            let key = key().context("no API key set for OpenAI")?;
-            let resp = client
-                .post(format!("{}/v1/chat/completions", base))
-                .bearer_auth(key)
-                .json(&json!({
-                    "model": cfg.model,
-                    "messages": [
-                        { "role": "system", "content": system },
-                        { "role": "user", "content": user },
-                    ],
-                }))
-                .send()
-                .await
-                .context("calling OpenAI API")?;
-            let status = resp.status();
-            let body: Value = resp.json().await.context("reading OpenAI response")?;
-            if !status.is_success() {
-                bail!("OpenAI API error ({}): {}", status, body["error"]["message"].as_str().unwrap_or("unknown"));
-            }
-            Ok(body["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
-        }
-        "ollama" => {
-            let base = if cfg.base_url.is_empty() { "http://localhost:11434" } else { &cfg.base_url };
-            let resp = client
-                .post(format!("{}/api/chat", base))
-                .json(&json!({
-                    "model": cfg.model,
-                    "stream": false,
-                    "messages": [
-                        { "role": "system", "content": system },
-                        { "role": "user", "content": user },
-                    ],
-                }))
-                .send()
-                .await
-                .context("calling Ollama — is it running?")?;
-            let body: Value = resp.json().await.context("reading Ollama response")?;
-            if let Some(err) = body["error"].as_str() {
-                bail!("Ollama error: {}", err);
-            }
-            Ok(body["message"]["content"].as_str().unwrap_or("").to_string())
-        }
-        other => bail!("Unknown AI provider: {}", other),
-    }
 }
 
 /// Strip code fences and parse the extraction JSON array.
