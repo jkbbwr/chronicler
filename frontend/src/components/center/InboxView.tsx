@@ -5,7 +5,7 @@ import { KINDS } from "../sidebar/CodexView";
 // The Discovered inbox as a center tab: full-width review queue for
 // NER / LLM / manually promoted candidates.
 
-type ContextRef = string | { file: string; line: number; text: string };
+interface ContextRef { file: string; line: number; text: string }
 
 interface CandidateRow {
   name: string;
@@ -17,9 +17,8 @@ interface CandidateRow {
   summary: string;
 }
 
-const contextText = (c?: ContextRef) => (typeof c === "string" ? c : c?.text ?? "");
-const contextTarget = (c?: ContextRef) =>
-  typeof c === "object" && c && c.file && c.line > 0 ? c : null;
+const contextText = (c?: ContextRef) => c?.text ?? "";
+const contextTarget = (c?: ContextRef) => (c && c.file && c.line > 0 ? c : null);
 
 interface InboxViewProps {
   activeFile: string | null;

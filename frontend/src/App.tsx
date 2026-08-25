@@ -48,7 +48,7 @@ interface SessionTabRef {
 }
 
 interface SessionData {
-  openTabs: (SessionTabRef | string)[]; // strings = legacy file-only sessions
+  openTabs: SessionTabRef[];
   activeTab: string | null;
   // Hot-exit journal: unsaved buffer contents, restored as dirty tabs
   dirty: Record<string, string>;
@@ -186,8 +186,7 @@ const App: Component = () => {
       const p = session.panels?.[panel];
       if (p) setWorkbench("panels", panel, { size: p.size, visible: p.visible });
     }
-    for (const entry of session.openTabs ?? []) {
-      const ref: SessionTabRef = typeof entry === "string" ? { kind: "file", filename: entry } : entry;
+    for (const ref of session.openTabs ?? []) {
       if (ref.kind === "file" && ref.filename) {
         await openTab(ref.filename, session.dirty?.[ref.filename]);
       } else if (ref.kind === "entity" && ref.entityId !== undefined) {
