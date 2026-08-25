@@ -825,6 +825,7 @@ const App: Component = () => {
       },
     },
     { id: "snapshot.history", title: "Snapshots: Show History", run: () => { setWorkbench("panels", "left", "visible", true); setWorkbench("panels", "left", "activeView", "history"); } },
+    { id: "view.outline", title: "View: Outline", run: () => { setWorkbench("panels", "left", "visible", true); setWorkbench("panels", "left", "activeView", "outliner"); } },
     {
       id: "editor.annotate", title: "Editor: Insert Annotation", keybinding: "Mod+Shift+A",
       run: () => { const f = activeFile(); if (f) editorApis.get(f)?.insertAnnotation(); },
@@ -886,7 +887,7 @@ const App: Component = () => {
             <>
               <div class="panel panel-left" style={{ width: `${workbench.panels.left.size}px`, display: 'flex', 'flex-direction': 'column' }}>
                 <div class="panel-header" style={{ 'min-height': '35px' }}>
-                  <span>{workbench.panels.left.activeView}</span>
+                  <span>{{ binder: "Binder", outliner: "Outline", search: "Search", history: "History" }[workbench.panels.left.activeView as string] ?? workbench.panels.left.activeView}</span>
                 </div>
                 <div class="panel-content" style={{ padding: 0, flex: 1 }}>
                   {workbench.panels.left.activeView === "binder" && (
@@ -899,6 +900,12 @@ const App: Component = () => {
                       onNewFolder={handleNewFolder}
                       onRename={handleRenameItem}
                       onDelete={handleDeleteItem}
+                    />
+                  )}
+                  {workbench.panels.left.activeView === "outliner" && (
+                    <OutlinerView
+                      content={activeFile() ? (getFileTab(activeFile()!)?.content ?? "") : ""}
+                      onJump={(line) => { const f = activeFile(); if (f) editorApis.get(f)?.revealLine(line); }}
                     />
                   )}
                   {workbench.panels.left.activeView === "search" && (
@@ -1072,7 +1079,7 @@ const App: Component = () => {
               <Divider panel="right" direction="right" />
               <div class="panel panel-right" style={{ width: `${workbench.panels.right.size}px`, display: 'flex', 'flex-direction': 'column' }}>
                 <div class="panel-header" style={{ gap: "12px" }}>
-                  <For each={[["outliner", "Outline"], ["codex", "Codex"], ["agent", "Agent"]] as [string, string][]}>
+                  <For each={[["codex", "Codex"], ["agent", "Agent"]] as [string, string][]}>
                     {([view, label]) => (
                       <span
                         onClick={() => setWorkbench("panels", "right", "activeView", view as any)}
@@ -1089,12 +1096,6 @@ const App: Component = () => {
                   </For>
                 </div>
                 <div class="panel-content" style={{ padding: 0 }}>
-                  {workbench.panels.right.activeView === "outliner" && (
-                    <OutlinerView
-                      content={activeFile() ? (getFileTab(activeFile()!)?.content ?? "") : ""}
-                      onJump={(line) => { const f = activeFile(); if (f) editorApis.get(f)?.revealLine(line); }}
-                    />
-                  )}
                   {workbench.panels.right.activeView === "codex" && (
                     <CodexView
                       activeFile={activeFile()}

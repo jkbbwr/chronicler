@@ -82,14 +82,14 @@ export const [workbench, setWorkbench] = createStore<WorkbenchState>({
       size: 250,
       visible: true,
       activeView: "binder",
-      views: ["binder", "search", "history"],
+      views: ["binder", "outliner", "search", "history"],
     },
     right: {
       id: "right",
       size: 300,
       visible: true,
-      activeView: "outliner",
-      views: ["outliner", "agent", "codex"],
+      activeView: "codex",
+      views: ["agent", "codex"],
     },
     bottom: {
       id: "bottom",
