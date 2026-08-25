@@ -161,6 +161,7 @@ fn discover_files(root: &Path, files: &[String]) -> anyhow::Result<usize> {
                 kind_guess: s.kind,
                 source: "ner".into(),
                 summary: String::new(),
+                line: s.line,
             })
             .collect();
         new_total += codex::record_candidates(root, rel, &candidates)?;
@@ -536,6 +537,7 @@ fn codex_suggest(root: &Path, params: &Value) -> AnyResult<Value> {
     let name = param(params, "name")?;
     let file = params["file"].as_str().unwrap_or("");
     let context = params["context"].as_str().unwrap_or("");
+    let line = params["line"].as_u64().unwrap_or(0) as usize;
     let new = codex::record_candidates(
         root,
         file,
@@ -545,6 +547,7 @@ fn codex_suggest(root: &Path, params: &Value) -> AnyResult<Value> {
             source: "manual".into(),
             summary: String::new(),
             context: context.chars().take(160).collect(),
+            line,
         }],
     )?;
     Ok(json!({ "added": new > 0 }))

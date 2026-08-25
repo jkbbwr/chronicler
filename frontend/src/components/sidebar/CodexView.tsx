@@ -18,8 +18,8 @@ interface Entity {
 interface CodexViewProps {
   activeFile: string | null;
   refreshVersion: number;
-  /** Selection text promoted from the editor, if any. */
-  promoteDraft: string | null;
+  /** Selection promoted from the editor, if any, with its cursor line. */
+  promoteDraft: { name: string; line: number } | null;
   onDraftHandled: () => void;
   onOpenEntity: (id: number, title: string) => void;
   onOpenInbox: () => void;
@@ -61,9 +61,14 @@ export const CodexView: Component<CodexViewProps> = (props) => {
     if (!draft) return;
     (async () => {
       try {
-        await window.chronicler.invoke("codex/suggest", { name: draft, file: props.activeFile ?? "" });
+        await window.chronicler.invoke("codex/suggest", {
+          name: draft.name,
+          file: props.activeFile ?? "",
+          line: draft.line,
+          context: draft.name,
+        });
         refetchInbox();
-        props.onStatus(`"${draft}" added to Discovered`);
+        props.onStatus(`"${draft.name}" added to Discovered`);
         props.onOpenInbox();
       } catch (err: any) {
         props.onStatus(`Promote failed: ${err.message}`);

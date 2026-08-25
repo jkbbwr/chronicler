@@ -245,6 +245,7 @@ pub async fn scan_file(root: &Path, rel: &str) -> Result<(usize, usize)> {
             source: "llm".into(),
             summary: item["summary"].as_str().unwrap_or("").to_string(),
             context: String::new(),
+            line: 0,
         });
     }
     let new = codex::record_candidates(root, rel, &found)?;

@@ -27,6 +27,8 @@ export interface EditorApi {
   revealLine(line: number): void;
   /** The currently selected text (empty string when collapsed). */
   getSelection(): string;
+  /** 1-based line of the primary cursor. */
+  getCursorLine(): number;
 }
 
 interface EditorProps {
@@ -143,6 +145,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         const sel = view.state.selection.main;
         return view.state.sliceDoc(sel.from, sel.to);
       },
+      getCursorLine: () => view.state.doc.lineAt(view.state.selection.main.head).number,
     });
 
     // Apply settings changes to the live editor

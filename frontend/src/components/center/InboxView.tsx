@@ -5,15 +5,21 @@ import { KINDS } from "../sidebar/CodexView";
 // The Discovered inbox as a center tab: full-width review queue for
 // NER / LLM / manually promoted candidates.
 
+type ContextRef = string | { file: string; line: number; text: string };
+
 interface CandidateRow {
   name: string;
   kindGuess: string;
   count: number;
   files: string[];
-  contexts: string[];
+  contexts: ContextRef[];
   source: string;
   summary: string;
 }
+
+const contextText = (c?: ContextRef) => (typeof c === "string" ? c : c?.text ?? "");
+const contextTarget = (c?: ContextRef) =>
+  typeof c === "object" && c && c.file && c.line > 0 ? c : null;
 
 interface InboxViewProps {
   activeFile: string | null;
@@ -22,6 +28,7 @@ interface InboxViewProps {
   /** Bump shared codex state (panel badge, entity lists) after changes. */
   onChanged: () => void;
   onOpenEntity: (id: number, title: string) => void;
+  onOpenFile: (file: string, line: number) => void;
 }
 
 const btn = {
@@ -102,16 +109,17 @@ export const InboxView: Component<InboxViewProps> = (props) => {
       return `AI scan: ${res.newCandidates} new, ${res.aliasesAdded} alias(es) attached`;
     });
 
-  const promote = async (c: CandidateRow, asAliasOf?: number) => {
+  const promote = async (c: CandidateRow, opts: { asAliasOf?: number; edit?: boolean } = {}) => {
     try {
       const kind = kindChoice()[c.name] ?? (KINDS.includes(c.kindGuess as any) ? c.kindGuess : "character");
       const res = await window.chronicler.invoke("codex/promote", {
-        name: c.name, kind, summary: c.summary ?? "", asAliasOf,
+        name: c.name, kind, summary: c.summary ?? "", asAliasOf: opts.asAliasOf,
       });
       refetchCandidates();
       refetchEntities();
       props.onChanged();
-      if (res.created && !asAliasOf) props.onOpenEntity(res.created, c.name);
+      if (res.created && opts.edit) props.onOpenEntity(res.created, c.name);
+      else if (res.created) props.onStatus(`"${c.name}" added to the codex`);
     } catch (err: any) {
       props.onStatus(`Promote failed: ${err.message}`);
     }
@@ -160,9 +168,22 @@ export const InboxView: Component<InboxViewProps> = (props) => {
                   {c.source} · {c.count} file{c.count === 1 ? "" : "s"} · {c.files.slice(0, 3).join(", ")}{c.files.length > 3 ? "…" : ""}
                 </span>
               </div>
-              <Show when={c.summary || c.contexts[0]}>
-                <div style={{ color: "var(--text-muted)", "font-size": "13px", "margin-top": "6px", "font-style": c.summary ? "normal" : "italic" }}>
-                  {c.summary || `“${c.contexts[0]}”`}
+              <Show when={c.summary}>
+                <div style={{ color: "var(--text-muted)", "font-size": "13px", "margin-top": "6px" }}>{c.summary}</div>
+              </Show>
+              <Show when={contextText(c.contexts[0])}>
+                <div
+                  onClick={() => { const t = contextTarget(c.contexts[0]); if (t) props.onOpenFile(t.file, t.line); }}
+                  title={contextTarget(c.contexts[0]) ? `Open ${contextTarget(c.contexts[0])!.file}:${contextTarget(c.contexts[0])!.line}` : undefined}
+                  style={{
+                    color: "var(--text-muted)", "font-size": "13px", "margin-top": "6px",
+                    "font-style": "italic",
+                    cursor: contextTarget(c.contexts[0]) ? "pointer" : "default",
+                  }}
+                  onMouseEnter={(ev) => { if (contextTarget(c.contexts[0])) ev.currentTarget.style.color = "var(--accent)"; }}
+                  onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}
+                >
+                  “{contextText(c.contexts[0])}”
                 </div>
               </Show>
               <div style={{ display: "flex", gap: "8px", "margin-top": "10px", "align-items": "center" }}>
@@ -176,11 +197,14 @@ export const InboxView: Component<InboxViewProps> = (props) => {
                 <button style={{ ...btn, background: "var(--accent)", color: "#fff", border: "none" }} onClick={() => promote(c)}>
                   Add to codex
                 </button>
+                <button style={btn} onClick={() => promote(c, { edit: true })} title="Add and open the entity sheet">
+                  Add (edit)
+                </button>
                 <select
                   style={{ ...btn, cursor: "pointer", "max-width": "180px" }}
                   onChange={(ev) => {
                     const id = parseInt(ev.currentTarget.value, 10);
-                    if (!Number.isNaN(id)) promote(c, id);
+                    if (!Number.isNaN(id)) promote(c, { asAliasOf: id });
                     ev.currentTarget.value = "";
                   }}
                 >

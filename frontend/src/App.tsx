@@ -74,8 +74,8 @@ const App: Component = () => {
   const [fsVersion, setFsVersion] = createSignal(0);
   // Bumped when codex state changes; codex panel + center tabs refetch
   const [codexVersion, setCodexVersion] = createSignal(0);
-  // Editor selection awaiting "promote to codex"
-  const [codexDraft, setCodexDraft] = createSignal<string | null>(null);
+  // Editor selection awaiting "promote to codex" (with its cursor line)
+  const [codexDraft, setCodexDraft] = createSignal<{ name: string; line: number } | null>(null);
 
   const tabIndex = (id: string) => tabs.findIndex(t => t.id === id);
   const getTab = (id: string) => tabs.find(t => t.id === id);
@@ -317,9 +317,11 @@ const App: Component = () => {
     } else if (action.startsWith("codex-promote:")) {
       const name = action.slice("codex-promote:".length).trim();
       if (name) {
+        const file = activeFile();
+        const line = file ? editorApis.get(file)?.getCursorLine() ?? 0 : 0;
         setWorkbench("panels", "right", "visible", true);
         setWorkbench("panels", "right", "activeView", "codex");
-        setCodexDraft(name);
+        setCodexDraft({ name, line });
       }
     } else if (action === "save-file") {
       saveActive();
@@ -589,9 +591,10 @@ const App: Component = () => {
           setStatus("Select a name in the editor first");
           return;
         }
+        const line = file ? editorApis.get(file)?.getCursorLine() ?? 0 : 0;
         setWorkbench("panels", "right", "visible", true);
         setWorkbench("panels", "right", "activeView", "codex");
-        setCodexDraft(selection.slice(0, 80));
+        setCodexDraft({ name: selection.slice(0, 80), line });
       },
     },
     {
@@ -803,6 +806,7 @@ const App: Component = () => {
                         onStatus={setStatus}
                         onChanged={() => setCodexVersion(v => v + 1)}
                         onOpenEntity={openEntityTab}
+                        onOpenFile={openSearchResult}
                       />
                     )}
                     {tab.kind === "settings" && <SettingsView onStatus={setStatus} />}

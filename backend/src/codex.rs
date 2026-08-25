@@ -214,6 +214,8 @@ pub struct Candidate {
     pub source: String,
     pub summary: String,
     pub context: String,
+    /// 1-based line of the context within `file` (0 = unknown).
+    pub line: usize,
 }
 
 /// Normalize a discovered span: strip edge punctuation/quotes and dangling
@@ -275,9 +277,10 @@ pub fn record_candidates(root: &Path, file: &str, found: &[Candidate]) -> Result
                 if !files.contains(&file.to_string()) {
                     files.push(file.to_string());
                 }
-                let mut contexts: Vec<String> = serde_json::from_str(&contexts).unwrap_or_default();
-                if contexts.len() < 3 && !c.context.is_empty() && !contexts.contains(&c.context) {
-                    contexts.push(c.context.clone());
+                let mut contexts: Vec<Value> = serde_json::from_str(&contexts).unwrap_or_default();
+                let dup = contexts.iter().any(|v| v["text"] == c.context.as_str() || *v == Value::String(c.context.clone()));
+                if contexts.len() < 3 && !c.context.is_empty() && !dup {
+                    contexts.push(json!({ "file": file, "line": c.line, "text": c.context }));
                 }
                 // LLM-sourced fields outrank NER guesses
                 let kind = if (c.source == "llm" && !c.kind_guess.is_empty()) || kind_guess.is_empty() { c.kind_guess.clone() } else { kind_guess };
@@ -305,7 +308,7 @@ pub fn record_candidates(root: &Path, file: &str, found: &[Candidate]) -> Result
                         name,
                         c.kind_guess,
                         serde_json::to_string(&[file])?,
-                        serde_json::to_string(&[&c.context])?,
+                        serde_json::to_string(&[json!({ "file": file, "line": c.line, "text": c.context })])?,
                         c.source,
                         c.summary,
                         db::now()
