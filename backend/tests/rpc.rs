@@ -294,3 +294,23 @@ fn diag_fix_replaces_span() {
     b.shutdown();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn ai_key_roundtrip() {
+    let dir = temp_dir("aikey");
+    let mut b = Backend::spawn(&dir);
+
+    let set = b.call("ai/set_key", serde_json::json!({ "key": "sk-test" }));
+    assert_eq!(set["result"]["success"], true);
+    let cfg = b.call("ai/config", Value::Null);
+    assert_eq!(cfg["result"]["hasKey"], true);
+
+    // Clearing must land immediately, not on next restart
+    let clear = b.call("ai/set_key", serde_json::json!({ "key": "" }));
+    assert_eq!(clear["result"]["success"], true);
+    let cfg = b.call("ai/config", Value::Null);
+    assert_eq!(cfg["result"]["hasKey"], false);
+
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -558,6 +558,23 @@ async fn handle_request_line(
             Ok(reply) => Ok(json!({ "ok": true, "reply": reply })),
             Err(e) => Err(rpc_err(e)),
         },
+        "ai/set_key" => {
+            ai::set_key(req.params["key"].as_str().unwrap_or(""));
+            Ok(json!({ "success": true }))
+        }
+        "ai/scan" => {
+            let rel = req.params["rel_path"].as_str().unwrap_or("").to_string();
+            if rel.is_empty() {
+                Err((-32000, "Missing param: rel_path".to_string()))
+            } else {
+                match ai::scan_file(root, &rel).await {
+                    Ok((new, aliases)) => {
+                        Ok(json!({ "newCandidates": new, "aliasesAdded": aliases }))
+                    }
+                    Err(e) => Err(rpc_err(e)),
+                }
+            }
+        }
         "compile/run" => compile_run(root, &req.params).map_err(rpc_err),
         "snapshot/create" => snapshot_create(root, &req.params).map_err(rpc_err),
         "snapshot/list" => snapshot_list(root).map_err(rpc_err),

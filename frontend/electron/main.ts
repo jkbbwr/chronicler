@@ -62,8 +62,10 @@ function loadAiKey(): string {
 }
 
 function sendAiKeyToBackend() {
+  // An empty key must reach the backend too, or clearing only takes
+  // effect after the next restart.
   const key = loadAiKey();
-  if (!key || !rustProcess?.stdin) return;
+  if (!rustProcess?.stdin) return;
   const request = { jsonrpc: "2.0", id: nextRequestId++, method: "ai/set_key", params: { key } };
   rustProcess.stdin.write(JSON.stringify(request) + "\n");
 }
