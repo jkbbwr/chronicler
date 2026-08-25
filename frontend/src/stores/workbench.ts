@@ -66,8 +66,8 @@ export const [workbench, setWorkbench] = createStore<WorkbenchState>({
       id: "right",
       size: 300,
       visible: true,
-      activeView: "agent",
-      views: ["agent", "codex", "outliner"],
+      activeView: "outliner",
+      views: ["outliner", "agent", "codex"],
     },
     bottom: {
       id: "bottom",

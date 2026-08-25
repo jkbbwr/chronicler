@@ -5,6 +5,7 @@ import { EditorView, type EditorApi } from "./components/editor/EditorView";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
+import { OutlinerView } from "./components/sidebar/OutlinerView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ActivityBar } from "./components/sidebar/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -653,12 +654,37 @@ const App: Component = () => {
           {!workbench.zenMode && workbench.panels.right.visible && (
             <>
               <Divider panel="right" direction="right" />
-              <div class="panel panel-right" style={{ width: `${workbench.panels.right.size}px` }}>
-                <div class="panel-header">
-                  <span>{workbench.panels.right.activeView}</span>
+              <div class="panel panel-right" style={{ width: `${workbench.panels.right.size}px`, display: 'flex', 'flex-direction': 'column' }}>
+                <div class="panel-header" style={{ gap: "12px" }}>
+                  <For each={[["outliner", "Outline"], ["agent", "Agent"], ["codex", "Codex"]] as [string, string][]}>
+                    {([view, label]) => (
+                      <span
+                        onClick={() => setWorkbench("panels", "right", "activeView", view as any)}
+                        style={{
+                          cursor: "pointer",
+                          color: workbench.panels.right.activeView === view ? "var(--text-main)" : "var(--text-faint)",
+                          "border-bottom": workbench.panels.right.activeView === view ? "1px solid var(--accent)" : "1px solid transparent",
+                          "padding-bottom": "2px",
+                        }}
+                      >
+                        {label}
+                      </span>
+                    )}
+                  </For>
                 </div>
-                <div class="panel-content">
-                  Rig AI Agent Placeholder
+                <div class="panel-content" style={{ padding: 0 }}>
+                  {workbench.panels.right.activeView === "outliner" && (
+                    <OutlinerView
+                      content={activeTab() ? (getTab(activeTab()!)?.content ?? "") : ""}
+                      onJump={(line) => { const c = activeTab(); if (c) editorApis.get(c)?.revealLine(line); }}
+                    />
+                  )}
+                  {workbench.panels.right.activeView === "agent" && (
+                    <div style={{ padding: "15px", color: "var(--text-faint)", "font-size": "12px" }}>Rig AI Agent — coming soon</div>
+                  )}
+                  {workbench.panels.right.activeView === "codex" && (
+                    <div style={{ padding: "15px", color: "var(--text-faint)", "font-size": "12px" }}>Codex (characters, places, notes) — coming soon</div>
+                  )}
                 </div>
               </div>
             </>
