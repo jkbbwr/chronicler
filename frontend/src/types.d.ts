@@ -22,6 +22,7 @@ declare global {
         filters?: { name: string; extensions: string[] }[];
       }): Promise<{ canceled: boolean; filePath?: string }>;
       exportCompiled(source: string, dest: string): Promise<{ success: boolean }>;
+      aiStoreKey(key: string): Promise<{ stored: boolean }>;
       onEvent(callback: (event: any) => void): void;
       onMenuAction(callback: (action: string) => void): void;
     };

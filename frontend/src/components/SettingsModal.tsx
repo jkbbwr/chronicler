@@ -1,9 +1,47 @@
-import { type Component, For, Show, createSignal } from "solid-js";
+import { type Component, For, Show, createEffect, createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
 import { workbench, setWorkbench, updateSettings, THEMES } from "../stores/workbench";
 import { X, Palette, TextCursor, Bot } from "lucide-solid";
 
+const aiInputStyle = {
+  width: "100%", padding: "10px", background: "var(--bg-color)",
+  border: "1px solid var(--border-color)", color: "var(--text-main)",
+  "border-radius": "6px", outline: "none", "font-size": "13px",
+} as const;
+
 export const SettingsModal: Component = () => {
   const [activeTab, setActiveTab] = createSignal("editor");
+  const [ai, setAi] = createStore({ provider: "anthropic", model: "claude-opus-5", baseUrl: "", enabled: false, hasKey: false });
+  const [keyDraft, setKeyDraft] = createSignal("");
+  const [aiStatus, setAiStatus] = createSignal("");
+
+  createEffect(() => {
+    if (!workbench.isSettingsOpen) return;
+    window.chronicler.invoke("ai/config").then((cfg: any) => setAi(cfg)).catch(() => {});
+  });
+
+  const saveAiConfig = async (patch: Partial<typeof ai>) => {
+    setAi(patch as any);
+    try {
+      await window.chronicler.invoke("ai/config_set", { ...ai });
+      setAiStatus("Saved");
+      setTimeout(() => setAiStatus(""), 1500);
+    } catch (err: any) {
+      setAiStatus(`Save failed: ${err.message}`);
+    }
+  };
+
+  const saveKey = async () => {
+    try {
+      await window.chronicler.aiStoreKey(keyDraft());
+      setAi("hasKey", !!keyDraft());
+      setKeyDraft("");
+      setAiStatus(keyDraft() ? "Key stored" : "Key cleared");
+      setTimeout(() => setAiStatus(""), 1500);
+    } catch (err: any) {
+      setAiStatus(`Key store failed: ${err.message}`);
+    }
+  };
 
   return (
     <Show when={workbench.isSettingsOpen}>
@@ -91,7 +129,61 @@ export const SettingsModal: Component = () => {
 
               <Show when={activeTab() === "ai"}>
                 <h2 style={{ "font-size": "18px", color: "var(--text-main)", "margin-bottom": "20px", "font-weight": 500 }}>AI Integrations</h2>
-                <div style={{ "font-size": "13px", color: "var(--text-faint)" }}>AI integration is not implemented yet.</div>
+
+                <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "16px", "margin-bottom": "20px" }}>
+                  <div>
+                    <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>Provider</label>
+                    <select style={aiInputStyle} value={ai.provider} onChange={(e) => saveAiConfig({ provider: e.currentTarget.value })}>
+                      <option value="anthropic">Anthropic (Claude)</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="ollama">Ollama (local)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>Model</label>
+                    <input style={aiInputStyle} type="text" value={ai.model} onChange={(e) => saveAiConfig({ model: e.currentTarget.value })} />
+                  </div>
+                </div>
+
+                <div style={{ "margin-bottom": "20px" }}>
+                  <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>
+                    Base URL (optional — for proxies or a remote Ollama)
+                  </label>
+                  <input style={aiInputStyle} type="text" placeholder="provider default" value={ai.baseUrl} onChange={(e) => saveAiConfig({ baseUrl: e.currentTarget.value })} />
+                </div>
+
+                <Show when={ai.provider !== "ollama"}>
+                  <div style={{ "margin-bottom": "20px" }}>
+                    <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>
+                      API key {ai.hasKey ? "(a key is stored — enter a new one to replace it)" : ""}
+                    </label>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <input
+                        style={aiInputStyle}
+                        type="password"
+                        placeholder={ai.provider === "anthropic" ? "sk-ant-..." : "sk-..."}
+                        value={keyDraft()}
+                        onInput={(e) => setKeyDraft(e.currentTarget.value)}
+                      />
+                      <button
+                        onClick={saveKey}
+                        style={{ padding: "0 16px", background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}
+                      >
+                        Store
+                      </button>
+                    </div>
+                    <div style={{ "font-size": "11px", color: "var(--text-faint)", "margin-top": "6px" }}>
+                      Encrypted with the OS keychain; only held in memory by the local backend.
+                    </div>
+                  </div>
+                </Show>
+
+                <label style={{ display: "flex", "align-items": "center", gap: "10px", "font-size": "13px", color: "var(--text-main)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={ai.enabled} onChange={(e) => saveAiConfig({ enabled: e.currentTarget.checked })} />
+                  Auto-scan with AI when discovery finds new names (debounced)
+                </label>
+
+                <div style={{ "font-size": "12px", color: "var(--accent)", "margin-top": "12px", "min-height": "16px" }}>{aiStatus()}</div>
               </Show>
 
               <Show when={activeTab() === "appearance"}>

@@ -7,6 +7,7 @@ import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { OutlinerView } from "./components/sidebar/OutlinerView";
 import { HistoryView } from "./components/sidebar/HistoryView";
+import { CodexView } from "./components/sidebar/CodexView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ActivityBar } from "./components/sidebar/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -50,6 +51,10 @@ const App: Component = () => {
   const [welcome, setWelcome] = createSignal<{ path: string; openedAt: string }[] | null>(null);
   // Bumped when the backend reports filesystem changes; the binder refetches on it
   const [fsVersion, setFsVersion] = createSignal(0);
+  // Bumped when discovery adds codex candidates; the Codex panel refetches
+  const [codexVersion, setCodexVersion] = createSignal(0);
+  // Editor selection awaiting "promote to codex"
+  const [codexDraft, setCodexDraft] = createSignal<string | null>(null);
 
   const tabIndex = (filename: string) => tabs.findIndex(t => t.filename === filename);
   const getTab = (filename: string) => tabs.find(t => t.filename === filename);
@@ -103,6 +108,10 @@ const App: Component = () => {
         setStatus("Rust Backend Recompiling...");
       } else if (event.method === "project/changed") {
         handleExternalChanges(event.params?.paths ?? []);
+      } else if (event.method === "codex/changed") {
+        setCodexVersion(v => v + 1);
+        const n = event.params?.newCandidates ?? 0;
+        if (n > 0) setStatus(`Codex: ${n} new candidate${n === 1 ? "" : "s"} discovered`);
       }
     });
 
@@ -262,6 +271,13 @@ const App: Component = () => {
       runCommand("file.closeTab");
     } else if (action === "compile") {
       runCommand("compile.open");
+    } else if (action.startsWith("codex-promote:")) {
+      const name = action.slice("codex-promote:".length).trim();
+      if (name) {
+        setWorkbench("panels", "right", "visible", true);
+        setWorkbench("panels", "right", "activeView", "codex");
+        setCodexDraft(name);
+      }
     } else if (action === "save-file") {
       saveActive();
     } else if (action === "save-all") {
@@ -507,6 +523,21 @@ const App: Component = () => {
     { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
     { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
+    { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
+    {
+      id: "codex.promoteSelection", title: "Codex: Promote Selection", keybinding: "Mod+Shift+K",
+      run: () => {
+        const current = activeTab();
+        const selection = current ? editorApis.get(current)?.getSelection().trim() : "";
+        if (!selection) {
+          setStatus("Select a name in the editor first");
+          return;
+        }
+        setWorkbench("panels", "right", "visible", true);
+        setWorkbench("panels", "right", "activeView", "codex");
+        setCodexDraft(selection.slice(0, 80));
+      },
+    },
     {
       id: "snapshot.create", title: "Snapshots: Take Snapshot",
       run: async () => {
@@ -716,7 +747,14 @@ const App: Component = () => {
                     <div style={{ padding: "15px", color: "var(--text-faint)", "font-size": "12px" }}>Rig AI Agent — coming soon</div>
                   )}
                   {workbench.panels.right.activeView === "codex" && (
-                    <div style={{ padding: "15px", color: "var(--text-faint)", "font-size": "12px" }}>Codex (characters, places, notes) — coming soon</div>
+                    <CodexView
+                      activeFile={activeTab()}
+                      refreshVersion={codexVersion()}
+                      promoteDraft={codexDraft()}
+                      onDraftHandled={() => setCodexDraft(null)}
+                      onOpenFile={openSearchResult}
+                      onStatus={setStatus}
+                    />
                   )}
                 </div>
               </div>

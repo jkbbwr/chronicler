@@ -14,11 +14,73 @@ pub fn open(root: &Path) -> Result<Connection> {
          CREATE TABLE IF NOT EXISTS settings (
              key   TEXT PRIMARY KEY,
              value TEXT NOT NULL
-         );
-         PRAGMA user_version = 1;",
+         );",
     )
     .context("initializing project db schema")?;
+    migrate(&conn).context("migrating project db")?;
     Ok(conn)
+}
+
+/// Versioned migrations via PRAGMA user_version.
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < 2 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS entities (
+                 id      INTEGER PRIMARY KEY,
+                 name    TEXT NOT NULL UNIQUE,
+                 kind    TEXT NOT NULL DEFAULT 'character',
+                 summary TEXT NOT NULL DEFAULT '',
+                 body    TEXT NOT NULL DEFAULT '',
+                 aliases TEXT NOT NULL DEFAULT '[]',
+                 created INTEGER NOT NULL,
+                 updated INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS mentions (
+                 entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                 file      TEXT NOT NULL,
+                 line      INTEGER NOT NULL,
+                 PRIMARY KEY (entity_id, file, line)
+             );
+             CREATE TABLE IF NOT EXISTS candidates (
+                 name       TEXT PRIMARY KEY,
+                 kind_guess TEXT NOT NULL DEFAULT '',
+                 count      INTEGER NOT NULL DEFAULT 0,
+                 files      TEXT NOT NULL DEFAULT '[]',
+                 contexts   TEXT NOT NULL DEFAULT '[]',
+                 source     TEXT NOT NULL DEFAULT 'ner',
+                 updated    INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS dismissed (
+                 name TEXT PRIMARY KEY
+             );
+             PRAGMA user_version = 2;",
+        )?;
+    }
+    if version < 3 {
+        // Idempotent: a kill between ALTER and the version bump must not
+        // leave the db permanently unopenable.
+        let has_summary: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('candidates') WHERE name = 'summary'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !has_summary {
+            conn.execute_batch("ALTER TABLE candidates ADD COLUMN summary TEXT NOT NULL DEFAULT ''")?;
+        }
+        conn.execute_batch("PRAGMA user_version = 3")?;
+    }
+    Ok(())
+}
+
+pub fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub fn get_setting(root: &Path, key: &str) -> Result<Option<String>> {

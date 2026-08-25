@@ -92,6 +92,51 @@ fn documents_and_search() {
 }
 
 #[test]
+fn codex_entities_mentions_candidates() {
+    let dir = temp_dir("codex");
+    let mut b = Backend::spawn(&dir);
+
+    b.call("document/save", serde_json::json!({ "rel_path": "ch1.md", "content": "Veyra crossed the gate.\nThe Widow waited beyond it." }));
+
+    let created = b.call("codex/create", serde_json::json!({ "name": "Veyra", "kind": "character", "summary": "The protagonist" }));
+    let id = created["result"]["id"].as_i64().expect("create failed");
+
+    // Creating an entity reindexes mentions
+    let m = b.call("codex/mentions", serde_json::json!({ "id": id }));
+    let mentions = m["result"]["mentions"].as_array().unwrap();
+    assert_eq!(mentions.len(), 1);
+    assert_eq!(mentions[0]["line"], 1);
+
+    // Aliases match too (case-insensitive, word-bounded)
+    b.call("codex/add_alias", serde_json::json!({ "id": id, "alias": "Widow" }));
+    let m = b.call("codex/mentions", serde_json::json!({ "id": id }));
+    assert_eq!(m["result"]["mentions"].as_array().unwrap().len(), 2);
+
+    // Manual promote-from-selection lands in the inbox
+    b.call("codex/suggest", serde_json::json!({ "name": "the Pale Lady", "file": "ch1.md" }));
+    let c = b.call("codex/candidates", serde_json::Value::Null);
+    assert!(c["result"]["candidates"].as_array().unwrap().iter().any(|x| x["name"] == "the Pale Lady"));
+
+    // Promote as an alias of an existing entity (the nickname flow)
+    b.call("codex/promote", serde_json::json!({ "name": "the Pale Lady", "asAliasOf": id }));
+    let list = b.call("codex/list", serde_json::Value::Null);
+    let entity = &list["result"]["entities"][0];
+    assert!(entity["aliases"].as_array().unwrap().iter().any(|a| a == "the Pale Lady"));
+    let c = b.call("codex/candidates", serde_json::Value::Null);
+    assert!(c["result"]["candidates"].as_array().unwrap().is_empty());
+
+    // Dismissed names stay dead even if re-suggested
+    b.call("codex/suggest", serde_json::json!({ "name": "Nonsense", "file": "ch1.md" }));
+    b.call("codex/dismiss", serde_json::json!({ "name": "Nonsense" }));
+    b.call("codex/suggest", serde_json::json!({ "name": "Nonsense", "file": "ch1.md" }));
+    let c = b.call("codex/candidates", serde_json::Value::Null);
+    assert!(c["result"]["candidates"].as_array().unwrap().is_empty());
+
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn compile_manuscript() {
     let dir = temp_dir("compile");
     let mut b = Backend::spawn(&dir);

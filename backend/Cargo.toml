@@ -13,3 +13,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 notify = "8"
 rusqlite = { version = "0.33", features = ["bundled"] }
 regex = "1"
+aho-corasick = "1.1.5"
+ndarray = "0.17.2"
+ort = "2.0.0-rc.13"
+tokenizers = "0.23.1"
+reqwest = { version = "0.13.4", features = ["json"] }

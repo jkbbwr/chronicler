@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, MenuItem, dialog, shell, safeStorage } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, ChildProcess } from "node:child_process";
@@ -34,6 +34,38 @@ function rejectAllPending(reason: string) {
     reject(new Error(reason));
   }
   pendingRequests.clear();
+}
+
+// ---- AI API key: encrypted at rest with the OS keychain, held in memory
+// by the backend only. Re-sent whenever the backend (re)starts. ----
+
+const aiKeyFile = () => path.join(app.getPath("userData"), "ai-key.enc");
+
+function storeAiKey(key: string) {
+  try {
+    if (!key) {
+      fs.rmSync(aiKeyFile(), { force: true });
+      return;
+    }
+    fs.writeFileSync(aiKeyFile(), safeStorage.encryptString(key));
+  } catch (err) {
+    console.error("Failed to store AI key:", err);
+  }
+}
+
+function loadAiKey(): string {
+  try {
+    return safeStorage.decryptString(fs.readFileSync(aiKeyFile()));
+  } catch {
+    return "";
+  }
+}
+
+function sendAiKeyToBackend() {
+  const key = loadAiKey();
+  if (!key || !rustProcess?.stdin) return;
+  const request = { jsonrpc: "2.0", id: nextRequestId++, method: "ai/set_key", params: { key } };
+  rustProcess.stdin.write(JSON.stringify(request) + "\n");
 }
 
 // ---- Recent projects (IntelliJ-style welcome screen state) ----
@@ -246,6 +278,8 @@ function startBackend(projectPath?: string) {
     });
   }
 
+  sendAiKeyToBackend();
+
   rustProcess.on("exit", (code) => {
     console.log(`Backend process exited with code ${code}`);
     // Only reject if this is still the live process; a superseded process
@@ -296,6 +330,14 @@ function createWindow() {
   // which suppresses this event, so the two never fight.
   mainWindow.webContents.on("context-menu", (_event, params) => {
     const menu = new Menu();
+    const selection = params.selectionText.trim();
+    if (selection && selection.length <= 80) {
+      menu.append(new MenuItem({
+        label: `Promote “${selection.length > 30 ? selection.slice(0, 30) + "…" : selection}” to Codex`,
+        click: () => mainWindow?.webContents.send("menu-action", `codex-promote:${selection}`),
+      }));
+      menu.append(new MenuItem({ type: "separator" }));
+    }
     for (const suggestion of params.dictionarySuggestions) {
       menu.append(new MenuItem({
         label: suggestion,
@@ -379,6 +421,12 @@ ipcMain.handle("open-project", async (_event, projectPath?: string) => {
 });
 
 ipcMain.handle("create-project", () => createProjectFlow());
+
+ipcMain.handle("ai-store-key", (_event, key: string) => {
+  storeAiKey(key);
+  sendAiKeyToBackend();
+  return { stored: !!key };
+});
 
 ipcMain.handle("remove-recent", (_event, projectPath: string) => {
   const recents = loadRecents();

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("chronicler", {
   removeRecent: (path: string) => ipcRenderer.invoke("remove-recent", path),
   showSaveDialog: (options: any) => ipcRenderer.invoke("show-save-dialog", options),
   exportCompiled: (source: string, dest: string) => ipcRenderer.invoke("export-compiled", source, dest),
+  aiStoreKey: (key: string) => ipcRenderer.invoke("ai-store-key", key),
   onEvent: (callback: (event: any) => void) => {
     ipcRenderer.on("backend-event", (_event, data) => callback(data));
   },

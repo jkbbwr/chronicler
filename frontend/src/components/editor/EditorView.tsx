@@ -25,6 +25,8 @@ export interface EditorApi {
   setContent(content: string): void;
   /** Move the cursor to a 1-based line and scroll it into view. */
   revealLine(line: number): void;
+  /** The currently selected text (empty string when collapsed). */
+  getSelection(): string;
 }
 
 interface EditorProps {
@@ -136,6 +138,10 @@ export const EditorView: Component<EditorProps> = (props) => {
           effects: CodeMirrorView.scrollIntoView(l.from, { y: "center" }),
         });
         view.focus();
+      },
+      getSelection: () => {
+        const sel = view.state.selection.main;
+        return view.state.sliceDoc(sel.from, sel.to);
       },
     });
 

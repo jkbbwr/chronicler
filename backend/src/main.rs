@@ -7,8 +7,11 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+mod ai;
+mod codex;
 mod compile;
 mod db;
+mod ner;
 mod rpc;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
 
@@ -124,6 +127,47 @@ fn ensure_repo(root: &Path) -> AnyResult<()> {
     Ok(())
 }
 
+/// Every .md file in the project, as relative paths.
+pub fn list_md_files(root: &Path) -> Vec<String> {
+    let mut entries = Vec::new();
+    get_files_recursive(root, "", &mut entries);
+    entries
+        .iter()
+        .filter(|e| !e["is_dir"].as_bool().unwrap_or(false))
+        .filter_map(|e| e["name"].as_str().map(String::from))
+        .collect()
+}
+
+/// Run NER discovery over files, feeding the candidates inbox.
+/// Returns the number of newly seen names.
+fn discover_files(root: &Path, files: &[String]) -> anyhow::Result<usize> {
+    if !ner::is_ready() {
+        return Ok(0);
+    }
+    let mut new_total = 0;
+    for rel in files {
+        let Ok(path) = resolve_path(root, rel) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let spans = ner::extract(&content)?;
+        let lines: Vec<&str> = content.lines().collect();
+        let candidates: Vec<codex::Candidate> = spans
+            .into_iter()
+            .map(|s| codex::Candidate {
+                context: lines
+                    .get(s.line.saturating_sub(1))
+                    .map(|l| l.trim().chars().take(160).collect())
+                    .unwrap_or_default(),
+                name: s.text,
+                kind_guess: s.kind,
+                source: "ner".into(),
+                summary: String::new(),
+            })
+            .collect();
+        new_total += codex::record_candidates(root, rel, &candidates)?;
+    }
+    Ok(new_total)
+}
+
 fn get_files_recursive(dir: &Path, prefix: &str, files: &mut Vec<serde_json::Value>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -187,6 +231,9 @@ async fn main() -> anyhow::Result<()> {
         let root = root.clone();
         tokio::spawn(async move {
             use std::time::Duration;
+            let discovery_pending: Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+                Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+            let mut discovery_task: Option<tokio::task::JoinHandle<()>> = None;
             while let Some(first) = fs_rx.recv().await {
                 let mut paths = vec![first];
                 // Debounce: batch everything that arrives within 300ms
@@ -207,12 +254,81 @@ async fn main() -> anyhow::Result<()> {
                 if rels.is_empty() {
                     continue;
                 }
+                let paths: Vec<String> = rels.into_iter().collect();
                 let notif = json!({
                     "jsonrpc": "2.0",
                     "method": "project/changed",
-                    "params": { "paths": rels.into_iter().collect::<Vec<_>>() }
+                    "params": { "paths": paths.clone() }
                 });
                 let _ = tx.send(notif.to_string()).await;
+
+                // Codex upkeep: mention reindex is cheap, run per batch.
+                // NER discovery is not — queue files and run after a quiet
+                // period so autosave bursts don't grind the CPU.
+                let md_files: Vec<String> =
+                    paths.into_iter().filter(|p| p.ends_with(".md")).collect();
+                if md_files.is_empty() {
+                    continue;
+                }
+                {
+                    let root = root.clone();
+                    let files = md_files.clone();
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(e) = codex::reindex_mentions(&root, Some(&files)) {
+                            tracing::warn!("mention reindex failed: {:#}", e);
+                        }
+                    });
+                }
+                {
+                    let mut pending = discovery_pending.lock().unwrap();
+                    pending.extend(md_files);
+                }
+                if let Some(handle) = discovery_task.take() {
+                    handle.abort(); // reset the quiet period
+                }
+                let pending = discovery_pending.clone();
+                let root2 = root.clone();
+                let tx2 = tx.clone();
+                discovery_task = Some(tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    let files: Vec<String> = {
+                        let mut p = pending.lock().unwrap();
+                        p.drain().collect()
+                    };
+                    if files.is_empty() {
+                        return;
+                    }
+                    let root3 = root2.clone();
+                    let ner_files = files.clone();
+                    let found = tokio::task::spawn_blocking(move || {
+                        discover_files(&root3, &ner_files)
+                    })
+                    .await
+                    .unwrap_or(Ok(0));
+                    match found {
+                        Ok(n) if n > 0 => {
+                            // NER surfaced something new: optionally follow up
+                            // with the (costlier) LLM pass on the same files.
+                            let mut total = n;
+                            if ai::auto_scan_ready(&root2) {
+                                for rel in &files {
+                                    match ai::scan_file(&root2, rel).await {
+                                        Ok((extra, _aliases)) => total += extra,
+                                        Err(e) => tracing::warn!("auto LLM scan failed for {}: {:#}", rel, e),
+                                    }
+                                }
+                            }
+                            let notif = json!({
+                                "jsonrpc": "2.0",
+                                "method": "codex/changed",
+                                "params": { "newCandidates": total }
+                            });
+                            let _ = tx2.send(notif.to_string()).await;
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("NER discovery failed: {:#}", e),
+                    }
+                }));
             }
         })
     };
@@ -276,6 +392,55 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         })),
         "db/get" => db_get(root, &req.params).map_err(rpc_err),
         "db/set" => db_set(root, &req.params).map_err(rpc_err),
+        "codex/list" => codex::list_entities(root).map_err(rpc_err),
+        "codex/create" => codex_create(root, &req.params).map_err(rpc_err),
+        "codex/update" => codex_update(root, &req.params).map_err(rpc_err),
+        "codex/delete" => codex_delete(root, &req.params).map_err(rpc_err),
+        "codex/add_alias" => codex_add_alias(root, &req.params).map_err(rpc_err),
+        "codex/mentions" => codex_mentions(root, &req.params).map_err(rpc_err),
+        "codex/candidates" => codex::list_candidates(root).map_err(rpc_err),
+        "codex/dismiss" => codex_dismiss(root, &req.params).map_err(rpc_err),
+        "codex/promote" => codex_promote(root, &req.params).map_err(rpc_err),
+        "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
+        "codex/reindex" => codex_reindex(root).map_err(rpc_err),
+        "codex/scan" => codex_scan(root, &req.params).map_err(rpc_err),
+        "ner/status" => Ok(json!({ "ready": ner::is_ready(), "modelDir": ner::model_dir().display().to_string() })),
+        "ner/ensure" => match ner::ensure_model().await {
+            Ok(()) => Ok(json!({ "ready": ner::is_ready() })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "ai/config" => {
+            let cfg = ai::load_config(root);
+            Ok(json!({
+                "provider": cfg.provider, "model": cfg.model,
+                "baseUrl": cfg.base_url, "enabled": cfg.enabled,
+                "hasKey": ai::has_key(),
+            }))
+        },
+        "ai/config_set" => {
+            let cfg = ai::AiConfig {
+                provider: req.params["provider"].as_str().unwrap_or("anthropic").to_string(),
+                model: req.params["model"].as_str().unwrap_or("claude-opus-5").to_string(),
+                base_url: req.params["baseUrl"].as_str().unwrap_or("").to_string(),
+                enabled: req.params["enabled"].as_bool().unwrap_or(false),
+            };
+            ai::save_config(root, cfg).map(|_| json!({ "success": true })).map_err(rpc_err)
+        },
+        "ai/set_key" => {
+            ai::set_key(req.params["key"].as_str().unwrap_or(""));
+            Ok(json!({ "success": true }))
+        },
+        "ai/scan" => {
+            let rel = req.params["rel_path"].as_str().unwrap_or("").to_string();
+            if rel.is_empty() {
+                Err((-32000, "Missing param: rel_path".to_string()))
+            } else {
+                match ai::scan_file(root, &rel).await {
+                    Ok((new, aliases)) => Ok(json!({ "newCandidates": new, "aliasesAdded": aliases })),
+                    Err(e) => Err(rpc_err(e)),
+                }
+            }
+        },
         "compile/run" => compile_run(root, &req.params).map_err(rpc_err),
         "snapshot/create" => snapshot_create(root, &req.params).map_err(rpc_err),
         "snapshot/list" => snapshot_list(root).map_err(rpc_err),
@@ -306,6 +471,100 @@ fn db_set(root: &Path, params: &Value) -> AnyResult<Value> {
     let value = params["value"].as_str().unwrap_or("");
     db::set_setting(root, key, value)?;
     Ok(json!({ "success": true }))
+}
+
+fn codex_create(root: &Path, params: &Value) -> AnyResult<Value> {
+    let name = param(params, "name")?;
+    let kind = params["kind"].as_str().unwrap_or("character");
+    let summary = params["summary"].as_str().unwrap_or("");
+    let aliases: Vec<String> = params["aliases"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let id = codex::create_entity(root, name, kind, summary, &aliases)?;
+    codex::reindex_mentions(root, None)?;
+    Ok(json!({ "id": id }))
+}
+
+fn codex_update(root: &Path, params: &Value) -> AnyResult<Value> {
+    let id = params["id"].as_i64().context("missing id")?;
+    codex::update_entity(root, id, params)?;
+    // Renames and alias edits change what the mention automaton matches
+    if params["name"].is_string() || params["aliases"].is_array() {
+        codex::reindex_mentions(root, None)?;
+    }
+    Ok(json!({ "success": true }))
+}
+
+fn codex_delete(root: &Path, params: &Value) -> AnyResult<Value> {
+    let id = params["id"].as_i64().context("missing id")?;
+    codex::delete_entity(root, id)?;
+    Ok(json!({ "success": true }))
+}
+
+fn codex_add_alias(root: &Path, params: &Value) -> AnyResult<Value> {
+    let id = params["id"].as_i64().context("missing id")?;
+    let alias = param(params, "alias")?;
+    codex::add_alias(root, id, alias)?;
+    codex::reindex_mentions(root, None)?;
+    Ok(json!({ "success": true }))
+}
+
+fn codex_mentions(root: &Path, params: &Value) -> AnyResult<Value> {
+    let id = params["id"].as_i64().context("missing id")?;
+    codex::entity_mentions(root, id)
+}
+
+fn codex_dismiss(root: &Path, params: &Value) -> AnyResult<Value> {
+    codex::dismiss_candidate(root, param(params, "name")?)?;
+    Ok(json!({ "success": true }))
+}
+
+fn codex_promote(root: &Path, params: &Value) -> AnyResult<Value> {
+    let name = param(params, "name")?;
+    let kind = params["kind"].as_str().unwrap_or("character");
+    let summary = params["summary"].as_str().unwrap_or("");
+    let as_alias_of = params["asAliasOf"].as_i64();
+    let result = codex::promote_candidate(root, name, kind, summary, as_alias_of)?;
+    codex::reindex_mentions(root, None)?;
+    Ok(result)
+}
+
+/// Manual "promote to codex" from an editor selection: lands in the inbox
+/// as a manual-source candidate (or returns matching entities for aliasing).
+fn codex_suggest(root: &Path, params: &Value) -> AnyResult<Value> {
+    let name = param(params, "name")?;
+    let file = params["file"].as_str().unwrap_or("");
+    let context = params["context"].as_str().unwrap_or("");
+    let new = codex::record_candidates(
+        root,
+        file,
+        &[codex::Candidate {
+            name: name.to_string(),
+            kind_guess: String::new(),
+            source: "manual".into(),
+            summary: String::new(),
+            context: context.chars().take(160).collect(),
+        }],
+    )?;
+    Ok(json!({ "added": new > 0 }))
+}
+
+fn codex_reindex(root: &Path) -> AnyResult<Value> {
+    let count = codex::reindex_mentions(root, None)?;
+    Ok(json!({ "mentions": count }))
+}
+
+fn codex_scan(root: &Path, params: &Value) -> AnyResult<Value> {
+    if !ner::is_ready() {
+        anyhow::bail!("NER model not downloaded yet — fetch it from the Codex panel first");
+    }
+    let files: Vec<String> = match params["rel_path"].as_str() {
+        Some(f) => vec![f.to_string()],
+        None => list_md_files(root),
+    };
+    let new = discover_files(root, &files)?;
+    Ok(json!({ "newCandidates": new, "scanned": files.len() }))
 }
 
 fn compile_run(root: &Path, params: &Value) -> AnyResult<Value> {
