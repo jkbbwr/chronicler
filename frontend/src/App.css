@@ -1,0 +1,208 @@
+:root {
+  /* Core Palette (Zed / Modern Dark Theme inspired) */
+  --bg-color: #1a1a1a;
+  --panel-bg: #212121;
+  --header-bg: #1a1a1a;
+  --titlebar-bg: #141414;
+  
+  /* Text */
+  --text-main: #e0e0e0;
+  --text-muted: #888888;
+  --text-faint: #555555;
+  
+  /* Borders and Interactive */
+  --border-color: #333333;
+  --hover-bg: #2a2a2a;
+  --active-bg: #333333;
+  --accent: #4a90e2; /* Softer blue */
+  --accent-hover: #5ba1f3;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-color);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none; /* Prevent accidental text highlighting of UI elements */
+}
+
+/* Allow selection inside the editor */
+.editor-content {
+  user-select: auto;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  height: 38px; /* Slightly taller for modern MacOS feel */
+  background: var(--titlebar-bg);
+  -webkit-app-region: drag; /* MacOS frameless window dragging */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.main-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-color);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+}
+
+.panel-left {
+  background: var(--panel-bg);
+}
+
+.panel-right {
+  background: var(--panel-bg);
+}
+
+.panel-center {
+  flex: 1;
+  background: var(--bg-color);
+  position: relative;
+}
+
+.panel-header {
+  height: 40px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  padding: 0 15px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.editor-tabs {
+  height: 40px;
+  background: var(--panel-bg);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+}
+
+.editor-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 15px;
+  background: transparent;
+  color: var(--text-muted);
+  border-right: 1px solid transparent;
+  border-left: 1px solid transparent;
+  position: relative;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.tab:hover {
+  background: var(--hover-bg);
+  color: var(--text-main);
+}
+
+.tab.active {
+  background: var(--bg-color);
+  color: var(--text-main);
+  border-right: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
+}
+
+.tab.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+}
+
+.panel-content, .editor-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Global Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Empty State / Watermark */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+.empty-state-logo {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-bottom: 20px;
+  color: rgba(255, 255, 255, 0.05);
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+.shortcut-key {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
