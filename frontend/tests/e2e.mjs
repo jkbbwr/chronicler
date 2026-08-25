@@ -166,6 +166,8 @@ async function main() {
   } catch (err) {
     step("(aborted)", false, String(err.message ?? err));
   } finally {
+    // Don't leave the temp project in the user's recent-projects list
+    try { await evaluate(`window.chronicler.removeRecent(${JSON.stringify(project)})`); } catch {}
     try { ws?.close(); } catch {}
     if (devProc?.pid) {
       try { process.kill(-devProc.pid, "SIGTERM"); } catch {}

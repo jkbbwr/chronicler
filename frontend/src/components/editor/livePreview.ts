@@ -1,4 +1,4 @@
-import { type Extension, RangeSetBuilder } from "@codemirror/state";
+import { type Extension } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -46,7 +46,10 @@ const headingClass: Record<string, string> = {
 };
 
 function buildDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
+  const ranges: ReturnType<Decoration["range"]>[] = [];
+  const add = (from: number, to: number, deco: Decoration) => {
+    if (to > from) ranges.push(deco.range(from, to));
+  };
   const { state } = view;
   const doc = state.doc;
 
@@ -75,7 +78,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         // Headings: size styling always applies; the #-marks hide when inactive
         if (headingClass[name]) {
-          builder.add(node.from, node.to, Decoration.mark({ class: headingClass[name] }));
+          add(node.from, node.to, Decoration.mark({ class: headingClass[name] }));
           return;
         }
         if (name === "HeaderMark") {
@@ -83,59 +86,59 @@ function buildDecorations(view: EditorView): DecorationSet {
           if (parent && headingClass[parent.name] && !isActive(parent.from, parent.to)) {
             // Also swallow the space after "#" marks (ATX only)
             const after = doc.sliceString(node.to, node.to + 1);
-            builder.add(node.from, after === " " ? node.to + 1 : node.to, hide);
+            add(node.from, after === " " ? node.to + 1 : node.to, hide);
           }
           return;
         }
 
         if (name === "StrongEmphasis") {
-          builder.add(node.from, node.to, Decoration.mark({ class: "cm-lp-strong" }));
+          add(node.from, node.to, Decoration.mark({ class: "cm-lp-strong" }));
           return;
         }
         if (name === "Emphasis") {
-          builder.add(node.from, node.to, Decoration.mark({ class: "cm-lp-em" }));
+          add(node.from, node.to, Decoration.mark({ class: "cm-lp-em" }));
           return;
         }
         if (name === "EmphasisMark") {
           const parent = node.node.parent;
           if (parent && !isActive(parent.from, parent.to)) {
-            builder.add(node.from, node.to, hide);
+            add(node.from, node.to, hide);
           }
           return;
         }
 
         if (name === "InlineCode") {
-          builder.add(node.from, node.to, Decoration.mark({ class: "cm-lp-code" }));
+          add(node.from, node.to, Decoration.mark({ class: "cm-lp-code" }));
           return;
         }
         if (name === "CodeMark") {
           const parent = node.node.parent;
           if (parent && parent.name === "InlineCode" && !isActive(parent.from, parent.to)) {
-            builder.add(node.from, node.to, hide);
+            add(node.from, node.to, hide);
           }
           return;
         }
 
         if (name === "Strikethrough") {
-          builder.add(node.from, node.to, Decoration.mark({ class: "cm-lp-strike" }));
+          add(node.from, node.to, Decoration.mark({ class: "cm-lp-strike" }));
           return;
         }
         if (name === "StrikethroughMark") {
           const parent = node.node.parent;
           if (parent && !isActive(parent.from, parent.to)) {
-            builder.add(node.from, node.to, hide);
+            add(node.from, node.to, hide);
           }
           return;
         }
 
         if (name === "Link") {
-          builder.add(node.from, node.to, Decoration.mark({ class: "cm-lp-link" }));
+          add(node.from, node.to, Decoration.mark({ class: "cm-lp-link" }));
           return;
         }
         if (name === "LinkMark" || name === "URL") {
           const parent = node.node.parent;
           if (parent && parent.name === "Link" && !isActive(parent.from, parent.to)) {
-            builder.add(node.from, node.to, hide);
+            add(node.from, node.to, hide);
           }
           return;
         }
@@ -145,7 +148,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           if (!activeLines.has(line.number)) {
             // Hide "> " but keep the styled left border via the line class below
             const after = doc.sliceString(node.to, node.to + 1);
-            builder.add(node.from, after === " " ? node.to + 1 : node.to, hide);
+            add(node.from, after === " " ? node.to + 1 : node.to, hide);
           }
           return;
         }
@@ -154,14 +157,14 @@ function buildDecorations(view: EditorView): DecorationSet {
           const text = doc.sliceString(node.from, node.to);
           const line = doc.lineAt(node.from);
           if (/^[-*+]$/.test(text) && !activeLines.has(line.number)) {
-            builder.add(node.from, node.to, Decoration.replace({ widget: bulletWidget }));
+            add(node.from, node.to, Decoration.replace({ widget: bulletWidget }));
           }
           return;
         }
 
         if (name === "HorizontalRule") {
           if (!isActive(node.from, node.to)) {
-            builder.add(node.from, node.to, Decoration.replace({ widget: hrWidget }));
+            add(node.from, node.to, Decoration.replace({ widget: hrWidget }));
           }
           return;
         }
@@ -169,13 +172,14 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
-  return builder.finish();
+  // Nested/overlapping nodes arrive out of order; sort=true handles it
+  return Decoration.set(ranges, true);
 }
 
 // Blockquote lines get their border via line decorations, which must be
 // supplied separately from the (sorted) inline set to keep ordering valid.
 function buildLineDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
+  const ranges: ReturnType<Decoration["range"]>[] = [];
   const { state } = view;
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -186,14 +190,14 @@ function buildLineDecorations(view: EditorView): DecorationSet {
           const last = state.doc.lineAt(node.to).number;
           for (let l = first; l <= last; l++) {
             const line = state.doc.line(l);
-            builder.add(line.from, line.from, Decoration.line({ class: "cm-lp-quote" }));
+            ranges.push(Decoration.line({ class: "cm-lp-quote" }).range(line.from));
           }
           return false; // don't double-decorate nested quotes
         }
       },
     });
   }
-  return builder.finish();
+  return Decoration.set(ranges, true);
 }
 
 const livePreviewPlugin = ViewPlugin.fromClass(
