@@ -1,6 +1,7 @@
 import { type Component, createResource, createSignal, For, Show } from "solid-js";
 import { Search, Trash2 } from "lucide-solid";
 import { KINDS } from "../sidebar/CodexView";
+import { parseSceneHref, renderMarkdown } from "../../lib/markdown";
 
 // A codex entity opened as a center tab: room to actually write about the
 // character/place/etc., plus its mention index.
@@ -29,6 +30,8 @@ const input = {
 export const EntitySheet: Component<EntitySheetProps> = (props) => {
   const [saved, setSaved] = createSignal("");
   const [filling, setFilling] = createSignal<"summary" | "body" | null>(null);
+  // Notes are markdown: rendered at rest, raw while editing
+  const [editingNotes, setEditingNotes] = createSignal(false);
 
   const [entity, { refetch }] = createResource(
     () => [props.entityId, props.refreshVersion] as const,
@@ -166,15 +169,44 @@ export const EntitySheet: Component<EntitySheetProps> = (props) => {
             </div>
 
             <div style={{ "margin-bottom": "28px" }}>
-              <label style={fieldLabel}>Notes</label>
+              <label style={fieldLabel}>
+                Notes <span style={{ "text-transform": "none", "font-weight": 400 }}>(markdown — click to edit)</span>
+              </label>
               <div style={{ position: "relative" }}>
-                <textarea
-                  style={{ ...input, "min-height": "260px", resize: "vertical", "line-height": "1.6", "font-family": "inherit", "padding-right": "38px" }}
-                  value={filling() === "body" ? "Reading every mention and drafting notes…" : e().body}
-                  disabled={filling() === "body"}
-                  placeholder="Everything the manuscript needs you to remember."
-                  onChange={(ev) => save({ body: ev.currentTarget.value })}
-                />
+                <Show
+                  when={editingNotes() || filling() === "body" || !(e().body ?? "").trim()}
+                  fallback={
+                    <div
+                      class="agent-md"
+                      innerHTML={renderMarkdown(e().body)}
+                      title="Click to edit"
+                      onClick={(ev) => {
+                        const a = (ev.target as HTMLElement).closest("a");
+                        if (a) {
+                          ev.preventDefault();
+                          const scene = parseSceneHref(a.getAttribute("href") ?? "");
+                          if (scene) props.onOpenFile(scene.path, scene.line ?? 1);
+                          return;
+                        }
+                        setEditingNotes(true);
+                      }}
+                      style={{
+                        ...input, "min-height": "260px", "padding-right": "38px",
+                        cursor: "text", "line-height": "1.6", "font-size": "13.5px",
+                      }}
+                    />
+                  }
+                >
+                  <textarea
+                    ref={(el) => queueMicrotask(() => { if (editingNotes()) el.focus(); })}
+                    style={{ ...input, "min-height": "260px", resize: "vertical", "line-height": "1.6", "font-family": "inherit", "padding-right": "38px" }}
+                    value={filling() === "body" ? "Reading every mention and drafting notes…" : e().body}
+                    disabled={filling() === "body"}
+                    placeholder="Everything the manuscript needs you to remember. Markdown renders."
+                    onChange={(ev) => save({ body: ev.currentTarget.value })}
+                    onBlur={() => setEditingNotes(false)}
+                  />
+                </Show>
                 <FillButton field="body" />
               </div>
             </div>

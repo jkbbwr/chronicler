@@ -1,8 +1,7 @@
 import { type Component, createSignal, For, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { Send, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
+import { parseSceneHref, renderMarkdown } from "../../lib/markdown";
 
 // Chronicler's writing agent panel. Chat streams token-by-token; the
 // model can call tools (RAG search, grep, codex, scene reads) and each call
@@ -47,26 +46,6 @@ export const handleRigEvent = (method: string, params: any) => {
     });
   }
   onThreadUpdate?.();
-};
-
-/** Render an agent reply: markdown → sanitized HTML, with scene citations
- * turned into clickable links. Backtick paths ending in .md become links
- * too, since models reach for those naturally. */
-const renderAgentMd = (src: string): string => {
-  const raw = marked.parse(src, { async: false }) as string;
-  const clean = DOMPurify.sanitize(raw, { ALLOWED_URI_REGEXP: /^(?:https?|scene):/i });
-  const tpl = document.createElement("template");
-  tpl.innerHTML = clean;
-  tpl.content.querySelectorAll("code").forEach((c) => {
-    const t = (c.textContent ?? "").trim();
-    if (/^[^`\n]{1,200}\.md$/.test(t)) {
-      const a = document.createElement("a");
-      a.setAttribute("href", "scene://" + encodeURI(t));
-      a.textContent = t;
-      c.replaceWith(a);
-    }
-  });
-  return tpl.innerHTML;
 };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -178,12 +157,8 @@ export const AgentView: Component<AgentViewProps> = (props) => {
     const a = (e.target as HTMLElement).closest("a");
     if (!a) return;
     e.preventDefault();
-    const href = a.getAttribute("href") ?? "";
-    if (href.startsWith("scene://")) {
-      const [path, anchor] = href.slice("scene://".length).split("#");
-      const line = anchor ? parseInt(anchor.replace(/^L/i, ""), 10) : NaN;
-      props.onOpenScene(decodeURI(path), Number.isFinite(line) ? line : undefined);
-    }
+    const scene = parseSceneHref(a.getAttribute("href") ?? "");
+    if (scene) props.onOpenScene(scene.path, scene.line);
     // http(s) links stay inert: the panel shouldn't navigate the app
   };
 
@@ -231,7 +206,7 @@ export const AgentView: Component<AgentViewProps> = (props) => {
                 when={m.role === "assistant" && !m.error}
                 fallback={<span style={{ "white-space": "pre-wrap" }}>{m.content}</span>}
               >
-                <div class="agent-md" innerHTML={renderAgentMd(m.content)} onClick={onMdClick} />
+                <div class="agent-md" innerHTML={renderMarkdown(m.content)} onClick={onMdClick} />
               </Show>
               <Show when={m.streaming && !m.content}>
                 <span style={{ color: "var(--text-faint)" }}>thinking…</span>

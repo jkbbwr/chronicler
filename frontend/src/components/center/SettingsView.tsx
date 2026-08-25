@@ -67,16 +67,28 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
   };
 
   const saveKey = async () => {
-    const value = keyDraft();
+    const value = keyDraft().trim();
+    if (!value) return; // clearing is its own explicit button, never a side effect
     try {
       await window.chronicler.aiStoreKey(value);
-      setAi("hasKey", !!value);
+      setAi("hasKey", true);
       setKeyDraft("");
       setTestResult(null);
-      props.onStatus(value ? "API key stored" : "API key cleared");
+      props.onStatus("API key stored");
       loadModels();
     } catch (err: any) {
       props.onStatus(`Key store failed: ${err.message}`);
+    }
+  };
+
+  const clearKey = async () => {
+    try {
+      await window.chronicler.aiStoreKey("");
+      setAi("hasKey", false);
+      setTestResult(null);
+      props.onStatus("API key cleared");
+    } catch (err: any) {
+      props.onStatus(`Key clear failed: ${err.message}`);
     }
   };
 
@@ -171,17 +183,26 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
           <Row name="Embedding model" hint={ai.provider === "openrouter" ? "For manuscript semantic search. Blank uses openai/text-embedding-3-small." : "For manuscript semantic search — required, e.g. nomic-embed-text on Ollama or text-embedding-3-small on OpenAI. Changing it needs a reindex."}>
             <input style={input} type="text" list="ai-model-list" placeholder={ai.provider === "openrouter" ? "openai/text-embedding-3-small" : "nomic-embed-text"} value={ai.embedModel} onChange={(e) => saveAi({ embedModel: e.currentTarget.value })} />
           </Row>
-          <Row name="API key" hint={ai.hasKey ? "A key is stored (OS-keychain encrypted). Enter a new one to replace it, or store empty to clear." : ai.provider === "openrouter" ? "Required. Encrypted with the OS keychain; held in memory only by the local backend." : "Optional — local servers usually run without one."}>
+          <Row name="API key" hint={ai.hasKey ? "A key is stored (OS-keychain encrypted). Enter a new one to replace it." : ai.provider === "openrouter" ? "Required. Encrypted with the OS keychain; held in memory only by the local backend." : "Optional — local servers usually run without one."}>
             <div style={{ display: "flex", gap: "8px" }}>
               <input
                 style={input} type="password"
-                placeholder={ai.provider === "openrouter" ? "sk-or-..." : "sk-... (optional)"}
+                placeholder={ai.hasKey ? "•••••••• (stored)" : ai.provider === "openrouter" ? "sk-or-..." : "sk-... (optional)"}
                 value={keyDraft()}
                 onInput={(e) => setKeyDraft(e.currentTarget.value)}
               />
-              <button onClick={saveKey} style={{ padding: "0 18px", background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
+              <button
+                onClick={saveKey}
+                disabled={!keyDraft().trim()}
+                style={{ padding: "0 18px", background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px", cursor: keyDraft().trim() ? "pointer" : "default", "font-size": "13px", opacity: keyDraft().trim() ? 1 : 0.5 }}
+              >
                 Store
               </button>
+              <Show when={ai.hasKey}>
+                <button onClick={clearKey} style={{ padding: "0 14px", background: "transparent", border: "1px solid var(--border-color)", color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
+                  Clear
+                </button>
+              </Show>
             </div>
           </Row>
           <Row name="Connection" hint="Sends one tiny completion with the settings above.">

@@ -426,6 +426,8 @@ ipcMain.handle("open-project", async (_event, projectPath?: string) => {
 ipcMain.handle("create-project", () => createProjectFlow());
 
 ipcMain.handle("ai-store-key", (_event, key: string) => {
+  // Length-only breadcrumb so key lifecycle is traceable without leaking it
+  console.log(key ? `AI key stored (${key.length} chars)` : "AI key cleared");
   storeAiKey(key);
   sendAiKeyToBackend();
   return { stored: !!key };
