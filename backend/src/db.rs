@@ -73,6 +73,20 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
         conn.execute_batch("PRAGMA user_version = 3")?;
     }
+    if version < 4 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS dictionary (
+                 word TEXT PRIMARY KEY
+             );
+             CREATE TABLE IF NOT EXISTS suppressions (
+                 rule_id TEXT NOT NULL,
+                 file    TEXT NOT NULL,
+                 text    TEXT NOT NULL,
+                 PRIMARY KEY (rule_id, file, text)
+             );
+             PRAGMA user_version = 4;",
+        )?;
+    }
     Ok(())
 }
 

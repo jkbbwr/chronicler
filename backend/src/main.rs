@@ -11,6 +11,7 @@ mod ai;
 mod codex;
 mod compile;
 mod db;
+mod diagnostics;
 mod ner;
 mod rpc;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
@@ -274,9 +275,33 @@ async fn main() -> anyhow::Result<()> {
                 {
                     let root = root.clone();
                     let files = md_files.clone();
-                    tokio::task::spawn_blocking(move || {
-                        if let Err(e) = codex::reindex_mentions(&root, Some(&files)) {
-                            tracing::warn!("mention reindex failed: {:#}", e);
+                    let tx3 = tx.clone();
+                    tokio::spawn(async move {
+                        let root2 = root.clone();
+                        let files2 = files.clone();
+                        let diags = tokio::task::spawn_blocking(move || {
+                            if let Err(e) = codex::reindex_mentions(&root2, Some(&files2)) {
+                                tracing::warn!("mention reindex failed: {:#}", e);
+                            }
+                            let mut by_file = serde_json::Map::new();
+                            if diagnostics::is_ready() {
+                                for rel in &files2 {
+                                    if let Ok(d) = diagnostics::check_file(&root2, rel) {
+                                        by_file.insert(rel.clone(), Value::Array(d));
+                                    }
+                                }
+                            }
+                            by_file
+                        })
+                        .await
+                        .unwrap_or_default();
+                        if !diags.is_empty() {
+                            let notif = json!({
+                                "jsonrpc": "2.0",
+                                "method": "diag/updated",
+                                "params": { "files": diags }
+                            });
+                            let _ = tx3.send(notif.to_string()).await;
                         }
                     });
                 }
@@ -405,6 +430,23 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
         "codex/reindex" => codex_reindex(root).map_err(rpc_err),
         "codex/scan" => codex_scan(root, &req.params).map_err(rpc_err),
+        "diag/status" => Ok(json!({ "ready": diagnostics::is_ready(), "langDir": diagnostics::lang_dir().display().to_string() })),
+        "diag/ensure" => match diagnostics::ensure_models().await {
+            Ok(()) => Ok(json!({ "ready": diagnostics::is_ready() })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "diag/check" => diag_check(root, &req.params).map_err(rpc_err),
+        "diag/add_word" => (|| -> AnyResult<Value> {
+            diagnostics::add_word(root, param(&req.params, "word")?)?;
+            Ok(json!({ "success": true }))
+        })().map_err(rpc_err),
+        "diag/ignore" => (|| -> AnyResult<Value> {
+            let rule_id = param(&req.params, "ruleId")?;
+            let file = req.params["file"].as_str().unwrap_or("*");
+            let text = req.params["text"].as_str().unwrap_or("");
+            diagnostics::suppress(root, rule_id, file, text)?;
+            Ok(json!({ "success": true }))
+        })().map_err(rpc_err),
         "ner/status" => Ok(json!({ "ready": ner::is_ready(), "modelDir": ner::model_dir().display().to_string() })),
         "ner/ensure" => match ner::ensure_model().await {
             Ok(()) => Ok(json!({ "ready": ner::is_ready() })),
@@ -472,6 +514,28 @@ fn db_set(root: &Path, params: &Value) -> AnyResult<Value> {
     let value = params["value"].as_str().unwrap_or("");
     db::set_setting(root, key, value)?;
     Ok(json!({ "success": true }))
+}
+
+fn diag_check(root: &Path, params: &Value) -> AnyResult<Value> {
+    let files: Vec<String> = match params["rel_path"].as_str() {
+        Some(f) => vec![f.to_string()],
+        None => list_md_files(root),
+    };
+    let mut by_file = serde_json::Map::new();
+    for rel in &files {
+        match diagnostics::check_file(root, rel) {
+            Ok(diags) => {
+                by_file.insert(rel.clone(), Value::Array(diags));
+            }
+            Err(e) => {
+                // Missing models fail the whole call; per-file read errors don't
+                if !diagnostics::is_ready() {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Ok(json!({ "files": by_file }))
 }
 
 fn codex_create(root: &Path, params: &Value) -> AnyResult<Value> {

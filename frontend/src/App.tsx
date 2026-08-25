@@ -17,6 +17,8 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { EntitySheet } from "./components/center/EntitySheet";
 import { InboxView } from "./components/center/InboxView";
 import { SettingsView } from "./components/center/SettingsView";
+import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
+import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
 import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
@@ -59,7 +61,15 @@ interface SessionData {
 const sessionKey = (root: string) => `chronicler-session:${root}`;
 
 const App: Component = () => {
-  const [status, setStatus] = createSignal<string>("Initializing...");
+  const [status, setStatusRaw] = createSignal<string>("Initializing...");
+  const [logs, setLogs] = createSignal<LogEntry[]>([]);
+  // Status messages also land in the Output log (skipping save chatter)
+  const setStatus = (message: string) => {
+    setStatusRaw(message);
+    if (message === "Saving..." || message === "Saved locally" || message.startsWith("Backend connected")) return;
+    const time = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev.slice(-199), { time, message }]);
+  };
   // Store, not signal-of-array: field updates must preserve item identity so
   // <For> never disposes a row (and its CodeMirror instance) on keystrokes.
   const [tabs, setTabs] = createStore<TabState[]>([]);
@@ -79,6 +89,43 @@ const App: Component = () => {
   const [codexDraft, setCodexDraft] = createSignal<{ name: string; line: number } | null>(null);
   // Entity names/aliases for in-editor highlighting, longest-first
   const [entityRefs, setEntityRefs] = createSignal<EntityRef[]>([]);
+  // Prose diagnostics per file (spelling/grammar squiggles + Problems panel)
+  const [diagMap, setDiagMap] = createStore<Record<string, Diag[]>>({});
+
+  const recheckDiags = async (relPath?: string) => {
+    try {
+      const res = await window.chronicler.invoke("diag/check", relPath ? { rel_path: relPath } : {});
+      if (relPath) setDiagMap(relPath, res.files[relPath] ?? []);
+      else {
+        // Full check replaces everything
+        for (const key of Object.keys(diagMap)) setDiagMap(key, undefined as any);
+        for (const [file, diags] of Object.entries(res.files)) setDiagMap(file, diags as Diag[]);
+      }
+    } catch {
+      // Models not downloaded yet; the Problems panel offers the download
+    }
+  };
+
+  const jumpToDiag = async (d: Diag) => {
+    await openTab(d.file);
+    setTimeout(() => editorApis.get(d.file)?.revealSpan(d.line, d.colStart, d.colEnd), 60);
+  };
+
+  const addWordFromDiag = async (d: Diag) => {
+    await window.chronicler.invoke("diag/add_word", { word: d.text });
+    setStatus(`Added "${d.text}" to the project dictionary`);
+    recheckDiags();
+  };
+
+  const ignoreDiag = async (d: Diag, global: boolean) => {
+    await window.chronicler.invoke("diag/ignore", {
+      ruleId: d.ruleId,
+      file: global ? "*" : d.file,
+      text: global ? "" : d.text,
+    });
+    setStatus(global ? `Disabled rule ${d.ruleId}` : `Ignoring "${d.text}" in ${d.file}`);
+    recheckDiags();
+  };
 
   createEffect(() => {
     codexVersion(); // refresh whenever codex state changes
@@ -159,6 +206,10 @@ const App: Component = () => {
         setStatus("Rust Backend Recompiling...");
       } else if (event.method === "project/changed") {
         handleExternalChanges(event.params?.paths ?? []);
+      } else if (event.method === "diag/updated") {
+        for (const [file, diags] of Object.entries(event.params?.files ?? {})) {
+          setDiagMap(file, diags as Diag[]);
+        }
       } else if (event.method === "codex/changed") {
         setCodexVersion(v => v + 1);
         const n = event.params?.newCandidates ?? 0;
@@ -190,6 +241,7 @@ const App: Component = () => {
       // or still hold the previous project's tree — refetch either way.
       setFsVersion(v => v + 1);
       setCodexVersion(v => v + 1);
+      recheckDiags();
     } catch (err: any) {
       setStatus(`Failed to connect: ${err.message}`);
     }
@@ -806,6 +858,7 @@ const App: Component = () => {
                         <EditorView
                           initialContent={tab.content ?? ""}
                           entityRefs={entityRefs()}
+                          diags={diagMap[tab.filename!] ?? []}
                           onSave={(c) => handleSave(tab.filename!, c)}
                           onChange={(c) => handleEditorChange(tab.filename!, c)}
                           onReady={(api) => editorApis.set(tab.filename!, api)}
@@ -892,12 +945,15 @@ const App: Component = () => {
           <>
             <Divider panel="bottom" direction="up" />
             <div class="panel panel-bottom" style={{ height: `${workbench.panels.bottom.size}px`, display: 'flex', 'flex-direction': 'column' }}>
-              <div class="panel-header" style={{ 'min-height': '35px' }}>
-                <span>{workbench.panels.bottom.activeView}</span>
-              </div>
-              <div class="panel-content" style={{ overflow: 'auto' }}>
-                Terminal / Output Area
-              </div>
+              <ProblemsPanel
+                diagnostics={diagMap}
+                logs={logs()}
+                onJump={jumpToDiag}
+                onAddWord={addWordFromDiag}
+                onIgnore={ignoreDiag}
+                onRecheck={() => recheckDiags()}
+                onStatus={setStatus}
+              />
             </div>
           </>
         )}

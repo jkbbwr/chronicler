@@ -1,0 +1,75 @@
+import { type Extension } from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  ViewPlugin,
+  type ViewUpdate,
+} from "@codemirror/view";
+
+// Squiggly underlines for prose diagnostics: red for spelling, blue for
+// grammar (assistant reserved for later).
+
+export interface Diag {
+  source: "spelling" | "grammar" | "assistant";
+  severity: "error" | "warning";
+  file: string;
+  line: number; // 1-based
+  colStart: number;
+  colEnd: number;
+  text: string;
+  message: string;
+  ruleId: string;
+  replacements?: string[];
+}
+
+const squiggleTheme = EditorView.baseTheme({
+  ".cm-diag-spelling": {
+    textDecoration: "underline wavy #e06c75 1px",
+    textDecorationSkipInk: "none",
+  },
+  ".cm-diag-grammar": {
+    textDecoration: "underline wavy #61afef 1px",
+    textDecorationSkipInk: "none",
+  },
+  ".cm-diag-assistant": {
+    textDecoration: "underline wavy #b689e0 1px",
+    textDecorationSkipInk: "none",
+  },
+});
+
+export function diagSquiggles(diags: Diag[]): Extension {
+  if (diags.length === 0) return [];
+
+  const plugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = this.build(view);
+      }
+      update(update: ViewUpdate) {
+        // Diag positions are line-anchored snapshots: keep them mapped
+        // through edits until the next check replaces them.
+        if (update.docChanged) {
+          this.decorations = this.decorations.map(update.changes);
+        }
+      }
+      build(view: EditorView): DecorationSet {
+        const doc = view.state.doc;
+        const ranges = [];
+        for (const d of diags) {
+          if (d.line < 1 || d.line > doc.lines) continue;
+          const line = doc.line(d.line);
+          const from = Math.min(line.from + d.colStart, line.to);
+          const to = Math.min(line.from + d.colEnd, line.to);
+          if (to <= from) continue;
+          ranges.push(Decoration.mark({ class: `cm-diag-${d.source}` }).range(from, to));
+        }
+        return Decoration.set(ranges, true);
+      }
+    },
+    { decorations: (v) => v.decorations }
+  );
+
+  return [plugin, squiggleTheme];
+}

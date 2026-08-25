@@ -10,6 +10,7 @@ import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
 import { typewriterScroll, focusMode } from "./writingModes";
 import { entityLinks, type EntityRef } from "./entityLinks";
+import { diagSquiggles, type Diag } from "./diagSquiggles";
 
 // Chrome for light themes; dark themes use oneDark
 const cmLight = [
@@ -30,12 +31,16 @@ export interface EditorApi {
   getSelection(): string;
   /** 1-based line of the primary cursor. */
   getCursorLine(): number;
+  /** Select a span on a 1-based line (char columns) and scroll to it. */
+  revealSpan(line: number, colStart: number, colEnd: number): void;
 }
 
 interface EditorProps {
   initialContent: string;
   /** Codex entities to highlight, longest-pattern-first. */
   entityRefs?: EntityRef[];
+  /** Prose diagnostics for this file (squiggles). */
+  diags?: Diag[];
   onSave?: (content: string) => void;
   onChange?: (content: string) => void;
   onReady?: (api: EditorApi) => void;
@@ -54,6 +59,7 @@ export const EditorView: Component<EditorProps> = (props) => {
   const colorCompartment = new Compartment();
   const writingCompartment = new Compartment();
   const entitiesCompartment = new Compartment();
+  const diagsCompartment = new Compartment();
 
   const entityExtension = () =>
     entityLinks(props.entityRefs ?? [], (id, name) => props.onOpenEntity?.(id, name));
@@ -121,9 +127,10 @@ export const EditorView: Component<EditorProps> = (props) => {
         modeCompartment.of(workbench.settings.editorMode === "live" ? livePreview() : []),
         writingCompartment.of(writingExtensions()),
         entitiesCompartment.of(entityExtension()),
+        diagsCompartment.of(diagSquiggles(props.diags ?? [])),
         CodeMirrorView.lineWrapping,
-        // Native spellcheck needs these on the contenteditable element
-        CodeMirrorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
+        // Native spellcheck stays off: the diagnostics engine owns squiggles
+        CodeMirrorView.contentAttributes.of({ spellcheck: "false", autocorrect: "on", autocapitalize: "on" }),
         updateListener,
       ],
     });
@@ -155,6 +162,16 @@ export const EditorView: Component<EditorProps> = (props) => {
         return view.state.sliceDoc(sel.from, sel.to);
       },
       getCursorLine: () => view.state.doc.lineAt(view.state.selection.main.head).number,
+      revealSpan: (line: number, colStart: number, colEnd: number) => {
+        const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
+        const from = Math.min(l.from + colStart, l.to);
+        const to = Math.min(l.from + colEnd, l.to);
+        view.dispatch({
+          selection: { anchor: from, head: Math.max(from, to) },
+          effects: CodeMirrorView.scrollIntoView(from, { y: "center" }),
+        });
+        view.focus();
+      },
     });
 
     // Apply settings changes to the live editor
@@ -178,6 +195,10 @@ export const EditorView: Component<EditorProps> = (props) => {
 
     createEffect(() => {
       view.dispatch({ effects: entitiesCompartment.reconfigure(entityExtension()) });
+    });
+
+    createEffect(() => {
+      view.dispatch({ effects: diagsCompartment.reconfigure(diagSquiggles(props.diags ?? [])) });
     });
 
     onCleanup(() => {

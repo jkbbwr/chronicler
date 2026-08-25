@@ -319,7 +319,8 @@ function createWindow() {
     titleBarStyle: "hiddenInset", // MacOS VS Code style frameless window
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
-      spellcheck: true,
+      // Chronicler's own diagnostics engine owns spellcheck squiggles
+      spellcheck: false,
     },
   });
 

@@ -18,3 +18,6 @@ ndarray = "0.17.2"
 ort = "2.0.0-rc.13"
 tokenizers = "0.23.1"
 reqwest = { version = "0.13.4", features = ["json"] }
+spellbook = "0.4.2"
+nlprule = "0.6.4"
+flate2 = "1.1.9"
