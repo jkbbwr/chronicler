@@ -6,6 +6,7 @@ import { search, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { workbench } from "../../stores/workbench";
+import { livePreview } from "./livePreview";
 
 /** Handle for out-of-band editor operations (external reloads, search jumps). */
 export interface EditorApi {
@@ -30,6 +31,7 @@ export const EditorView: Component<EditorProps> = (props) => {
   let syncing = false;
 
   const themeCompartment = new Compartment();
+  const modeCompartment = new Compartment();
 
   const proseTheme = (fontFamily: string, fontSize: number) => CodeMirrorView.theme({
     "&": {
@@ -86,6 +88,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         markdown({ base: markdownLanguage }),
         oneDark,
         themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
+        modeCompartment.of(workbench.settings.editorMode === "live" ? livePreview() : []),
         CodeMirrorView.lineWrapping,
         // Native spellcheck needs these on the contenteditable element
         CodeMirrorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
@@ -121,6 +124,11 @@ export const EditorView: Component<EditorProps> = (props) => {
     createEffect(() => {
       const theme = proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize);
       view.dispatch({ effects: themeCompartment.reconfigure(theme) });
+    });
+
+    createEffect(() => {
+      const ext = workbench.settings.editorMode === "live" ? livePreview() : [];
+      view.dispatch({ effects: modeCompartment.reconfigure(ext) });
     });
 
     onCleanup(() => {

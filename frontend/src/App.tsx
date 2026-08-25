@@ -1,7 +1,8 @@
 import { createSignal, createEffect, onMount, onCleanup, For, Show, type Component } from "solid-js";
 import { createStore } from "solid-js/store";
-import { workbench, setWorkbench } from "./stores/workbench";
+import { workbench, setWorkbench, updateSettings, type EditorMode } from "./stores/workbench";
 import { EditorView, type EditorApi } from "./components/editor/EditorView";
+import { MarkdownPreview } from "./components/editor/MarkdownPreview";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -490,6 +491,17 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
     { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
+    { id: "editor.modeCode", title: "Editor: Source Mode", run: () => updateSettings({ editorMode: "code" }) },
+    { id: "editor.modePreview", title: "Editor: Preview Mode", run: () => updateSettings({ editorMode: "preview" }) },
+    { id: "editor.modeLive", title: "Editor: Live Preview Mode", run: () => updateSettings({ editorMode: "live" }) },
+    {
+      id: "editor.cycleMode", title: "Editor: Cycle View Mode", keybinding: "Mod+Shift+M",
+      run: () => {
+        const order: EditorMode[] = ["code", "preview", "live"];
+        const next = order[(order.indexOf(workbench.settings.editorMode) + 1) % order.length];
+        updateSettings({ editorMode: next });
+      },
+    },
     ...Array.from({ length: 9 }, (_, i) => ({
       id: `tab.goto${i + 1}`,
       title: `View: Go to Tab ${i + 1}`,
@@ -576,9 +588,23 @@ const App: Component = () => {
               </div>
             )}
 
-            {/* Breadcrumbs */}
-            <div style={{ padding: "8px 15px", "font-size": "12px", color: "var(--text-muted)", display: "flex", "align-items": "center", gap: "6px", "border-bottom": "1px solid var(--border-color)", background: "var(--bg-color)" }}>
-              <span>Chronicler</span> <ChevronRight size={12} color="var(--text-faint)" /> <span style={{ color: "var(--text-main)" }}>{activeTab()}</span>
+            {/* Breadcrumbs + view mode toggle */}
+            <div style={{ padding: "4px 15px", "min-height": "30px", "font-size": "12px", color: "var(--text-muted)", display: "flex", "align-items": "center", "justify-content": "space-between", "border-bottom": "1px solid var(--border-color)", background: "var(--bg-color)" }}>
+              <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+                <span>Chronicler</span> <ChevronRight size={12} color="var(--text-faint)" /> <span style={{ color: "var(--text-main)" }}>{activeTab()}</span>
+              </div>
+              <div class="mode-toggle">
+                <For each={[["code", "Code"], ["preview", "Preview"], ["live", "Live"]] as [EditorMode, string][]}>
+                  {([mode, label]) => (
+                    <button
+                      class={workbench.settings.editorMode === mode ? "active" : ""}
+                      onClick={() => updateSettings({ editorMode: mode })}
+                    >
+                      {label}
+                    </button>
+                  )}
+                </For>
+              </div>
             </div>
 
             <div class="editor-content" style={{ padding: 0, flex: 1, position: 'relative' }}>
@@ -607,12 +633,16 @@ const App: Component = () => {
                 {(tab) => (
                   <div style={{ display: activeTab() === tab.filename ? 'block' : 'none', height: '100%' }}>
                     {!tab.isLoading && (
-                      <EditorView
-                        initialContent={tab.content}
-                        onSave={(c) => handleSave(tab.filename, c)}
-                        onChange={(c) => handleEditorChange(tab.filename, c)}
-                        onReady={(api) => editorApis.set(tab.filename, api)}
-                      />
+                      workbench.settings.editorMode === "preview" ? (
+                        <MarkdownPreview content={tab.content} />
+                      ) : (
+                        <EditorView
+                          initialContent={tab.content}
+                          onSave={(c) => handleSave(tab.filename, c)}
+                          onChange={(c) => handleEditorChange(tab.filename, c)}
+                          onReady={(api) => editorApis.set(tab.filename, api)}
+                        />
+                      )
                     )}
                   </div>
                 )}

@@ -18,9 +18,12 @@ export interface PanelState {
   views: ViewId[];
 }
 
+export type EditorMode = "code" | "preview" | "live";
+
 export interface EditorSettings {
   fontFamily: string;
   fontSize: number;
+  editorMode: EditorMode;
 }
 
 export interface WorkbenchState {
@@ -33,6 +36,7 @@ export interface WorkbenchState {
 const DEFAULT_SETTINGS: EditorSettings = {
   fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
   fontSize: 16,
+  editorMode: "live",
 };
 
 const SETTINGS_KEY = "chronicler-settings";
