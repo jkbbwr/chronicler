@@ -6,6 +6,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+mod compile;
+mod db;
 mod rpc;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
 
@@ -255,6 +257,54 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
             "status": "ready",
             "root": root.display().to_string()
         })),
+        "db/get" => {
+            let key = req.params["key"].as_str().unwrap_or("");
+            if key.is_empty() {
+                Err((-32602, "Missing key".to_string()))
+            } else {
+                match db::get_setting(root, key) {
+                    Ok(value) => Ok(json!({ "value": value })),
+                    Err(e) => Err((-32000, format!("{:#}", e))),
+                }
+            }
+        },
+        "db/set" => {
+            let key = req.params["key"].as_str().unwrap_or("");
+            let value = req.params["value"].as_str().unwrap_or("");
+            if key.is_empty() {
+                Err((-32602, "Missing key".to_string()))
+            } else {
+                match db::set_setting(root, key, value) {
+                    Ok(()) => Ok(json!({ "success": true })),
+                    Err(e) => Err((-32000, format!("{:#}", e))),
+                }
+            }
+        },
+        "compile/run" => {
+            let result = (|| -> Result<Value, (i32, String)> {
+                let settings: compile::CompileSettings =
+                    serde_json::from_value(req.params["settings"].clone())
+                        .map_err(|e| (-32602, format!("Bad compile settings: {}", e)))?;
+                let specs: Vec<compile::ChapterSpec> =
+                    serde_json::from_value(req.params["chapters"].clone())
+                        .map_err(|e| (-32602, format!("Bad chapter list: {}", e)))?;
+                let mut chapters: Vec<(String, Vec<String>)> = Vec::new();
+                for spec in specs {
+                    let mut scenes = Vec::new();
+                    for rel in &spec.scenes {
+                        let path = resolve_path(root, rel).map_err(|e| (-32602, e))?;
+                        let content = std::fs::read_to_string(&path)
+                            .map_err(|e| (-32000, format!("Failed to read {}: {}", rel, e)))?;
+                        scenes.push(content);
+                    }
+                    chapters.push((spec.title, scenes));
+                }
+                let output = compile::run(root, chapters, &settings)
+                    .map_err(|e| (-32000, format!("{:#}", e)))?;
+                Ok(json!({ "output": output.display().to_string() }))
+            })();
+            result
+        },
         "snapshot/create" => {
             let message = req.params["message"].as_str().unwrap_or("Snapshot");
             let result = (|| -> Result<Value, String> {

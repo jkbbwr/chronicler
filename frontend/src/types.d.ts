@@ -16,6 +16,12 @@ declare global {
       openProject(path?: string): Promise<void>;
       createProject(): Promise<void>;
       removeRecent(path: string): Promise<{ path: string; openedAt: string }[]>;
+      showSaveDialog(options: {
+        title?: string;
+        defaultPath?: string;
+        filters?: { name: string; extensions: string[] }[];
+      }): Promise<{ canceled: boolean; filePath?: string }>;
+      exportCompiled(source: string, dest: string): Promise<{ success: boolean }>;
       onEvent(callback: (event: any) => void): void;
       onMenuAction(callback: (action: string) => void): void;
     };

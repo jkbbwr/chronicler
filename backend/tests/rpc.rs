@@ -92,6 +92,63 @@ fn documents_and_search() {
 }
 
 #[test]
+fn compile_manuscript() {
+    let dir = temp_dir("compile");
+    let mut b = Backend::spawn(&dir);
+
+    b.call("project/create_folder", serde_json::json!({ "rel_path": "01 Arrival" }));
+    b.call("document/save", serde_json::json!({ "rel_path": "01 Arrival/scene1.md", "content": "She **arrived** at last." }));
+    b.call("document/save", serde_json::json!({ "rel_path": "01 Arrival/scene2.md", "content": "# Later\n\nA *quiet* evening — cost: $5." }));
+
+    let chapters = serde_json::json!([{ "title": "Arrival", "scenes": ["01 Arrival/scene1.md", "01 Arrival/scene2.md"] }]);
+
+    // Settings persistence in the project db
+    let set = b.call("db/set", serde_json::json!({ "key": "compile", "value": "{\"paper\":\"a5\"}" }));
+    assert_eq!(set["result"]["success"], true);
+    let got = b.call("db/get", serde_json::json!({ "key": "compile" }));
+    assert_eq!(got["result"]["value"], "{\"paper\":\"a5\"}");
+    assert!(dir.join(".chronicler").join("db").exists());
+
+    // Typst-source compile (no external binary needed)
+    let run = b.call("compile/run", serde_json::json!({
+        "chapters": chapters,
+        "settings": { "format": "typst", "title": "Test Book", "author": "A. Writer" }
+    }));
+    let out = run["result"]["output"].as_str().expect("compile failed");
+    assert!(out.ends_with("manuscript.typ"));
+    let typ = std::fs::read_to_string(out).unwrap();
+    assert!(typ.contains("= Chapter 1 \\ Arrival"));
+    assert!(typ.contains("*arrived*"));
+    assert!(typ.contains("_quiet_"));
+    assert!(typ.contains("\\$5")); // typst specials escaped
+    assert!(typ.contains("#sep")); // scene separator between the two scenes
+    assert!(typ.contains("Test Book"));
+
+    // Full PDF render when typst is available
+    let typst_present = std::process::Command::new("typst")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if typst_present {
+        let run = b.call("compile/run", serde_json::json!({
+            "chapters": chapters,
+            "settings": { "format": "pdf", "title": "Test Book" }
+        }));
+        let out = run["result"]["output"].as_str().expect("pdf compile failed");
+        assert!(out.ends_with("manuscript.pdf"));
+        let bytes = std::fs::read(out).unwrap();
+        assert!(bytes.starts_with(b"%PDF"), "output is not a PDF");
+        assert!(bytes.len() > 1000);
+    } else {
+        eprintln!("typst not on PATH; skipping pdf render assertion");
+    }
+
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn snapshots_roundtrip() {
     let dir = temp_dir("snap");
     let mut b = Backend::spawn(&dir);

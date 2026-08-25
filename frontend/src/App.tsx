@@ -11,6 +11,7 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ActivityBar } from "./components/sidebar/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { SettingsModal } from "./components/SettingsModal";
+import { CompileModal } from "./components/CompileModal";
 import { TabContextMenu } from "./components/editor/TabContextMenu";
 import { Divider } from "./components/Divider";
 import { X, Circle, ChevronRight } from "lucide-solid";
@@ -249,6 +250,8 @@ const App: Component = () => {
       runCommand("view.quickOpen");
     } else if (action === "close-tab") {
       runCommand("file.closeTab");
+    } else if (action === "compile") {
+      runCommand("compile.open");
     } else if (action === "save-file") {
       saveActive();
     } else if (action === "save-all") {
@@ -493,6 +496,7 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
     { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
+    { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     {
       id: "snapshot.create", title: "Snapshots: Take Snapshot",
       run: async () => {
@@ -764,6 +768,7 @@ const App: Component = () => {
         />
       )}
       <SettingsModal />
+      <CompileModal />
       {welcome() && <WelcomeScreen recents={welcome()!} />}
     </div>
   );

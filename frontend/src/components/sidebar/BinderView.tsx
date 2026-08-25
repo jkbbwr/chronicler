@@ -2,6 +2,7 @@ import { type Component, createResource, createSignal, Show, createEffect } from
 import { FileText, FolderPlus, FilePlus}  from "lucide-solid";
 import { BinderContextMenu } from "./BinderContextMenu";
 import { BinderTreeItem, type TreeNode } from "./BinderTreeItem";
+import { buildTree, ORDER_FILE, type FileEntry, type OrderMap } from "../../lib/binderTree";
 import { onCleanup, onMount } from "solid-js";
 
 interface BinderViewProps {
@@ -15,16 +16,6 @@ interface BinderViewProps {
   onRename?: (oldName: string, newName: string) => Promise<void> | void;
   onDelete?: (name: string) => Promise<void> | void;
 }
-
-interface FileEntry {
-  name: string;
-  is_dir: boolean;
-}
-
-/** Manual ordering: parent dir path ("" for root) -> child basenames in order. */
-type OrderMap = Record<string, string[]>;
-
-const ORDER_FILE = ".chronicler/order.json";
 
 const basename = (p: string) => p.split("/").pop()!;
 const parentOf = (p: string) => p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
@@ -218,61 +209,6 @@ export const BinderView: Component<BinderViewProps> = (props) => {
 
   const handleContextMenu = (e: MouseEvent, path: string, is_dir: boolean) => {
     setContextMenu({ x: e.clientX, y: e.clientY, name: path, is_dir });
-  };
-
-  const buildTree = (list: FileEntry[], order: OrderMap) => {
-    const rootNodes: TreeNode[] = [];
-    const map = new Map<string, TreeNode>();
-
-    // Sort so parents come before children
-    const sorted = [...list].sort((a, b) => a.name.length - b.name.length);
-
-    for (const f of sorted) {
-      const parts = f.name.split("/");
-      const name = parts.pop()!;
-      const parentPath = parts.join("/");
-
-      const node: TreeNode = {
-        path: f.name,
-        name,
-        is_dir: f.is_dir,
-        children: []
-      };
-
-      map.set(f.name, node);
-
-      if (parentPath === "") {
-        rootNodes.push(node);
-      } else {
-        const parent = map.get(parentPath);
-        if (parent) {
-          parent.children.push(node);
-        } else {
-          // Fallback if parent missing
-          rootNodes.push(node);
-        }
-      }
-    }
-
-    const sortLevel = (nodes: TreeNode[], parentPath: string) => {
-      const manual = order[parentPath] ?? [];
-      nodes.sort((a, b) => {
-        const ia = manual.indexOf(a.name);
-        const ib = manual.indexOf(b.name);
-        if (ia !== -1 && ib !== -1) return ia - ib;
-        if (ia !== -1) return -1;
-        if (ib !== -1) return 1;
-        if (a.is_dir && !b.is_dir) return -1;
-        if (!a.is_dir && b.is_dir) return 1;
-        return a.name.localeCompare(b.name);
-      });
-      for (const node of nodes) {
-        if (node.is_dir) sortLevel(node.children, node.path);
-      }
-    };
-
-    sortLevel(rootNodes, "");
-    return rootNodes;
   };
 
   return (

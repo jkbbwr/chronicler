@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, MenuItem, dialog, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn, ChildProcess } from "node:child_process";
@@ -161,6 +161,8 @@ function setupMenu() {
           }, 
           accelerator: 'CmdOrCtrl+Shift+S' 
         },
+        { type: 'separator' },
+        { label: 'Compile Manuscript...', click: () => mainWindow?.webContents.send('menu-action', 'compile'), accelerator: 'CmdOrCtrl+Shift+E' },
         { type: 'separator' },
         { label: 'Close Tab', click: () => mainWindow?.webContents.send('menu-action', 'close-tab'), accelerator: 'CmdOrCtrl+W' },
         isMac ? { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' } : { role: 'quit' }
@@ -383,6 +385,22 @@ ipcMain.handle("remove-recent", (_event, projectPath: string) => {
   saveRecents(recents);
   setupMenu();
   return recents.projects.filter(p => fs.existsSync(p.path));
+});
+
+// Compile export: the backend only writes inside the project root; choosing
+// the destination and copying the artifact out is the main process's job.
+ipcMain.handle("show-save-dialog", async (_event, options: Electron.SaveDialogOptions) => {
+  if (!mainWindow) return { canceled: true };
+  return dialog.showSaveDialog(mainWindow, options);
+});
+
+ipcMain.handle("export-compiled", async (_event, source: string, dest: string) => {
+  if (!currentProjectPath || !source.startsWith(currentProjectPath)) {
+    throw new Error("Refusing to export a file from outside the open project");
+  }
+  await fs.promises.copyFile(source, dest);
+  shell.showItemInFolder(dest);
+  return { success: true };
 });
 
 // Native message boxes (three-way save prompts, destructive confirms, errors)
