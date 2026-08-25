@@ -16,18 +16,19 @@ import { TabContextMenu } from "./components/editor/TabContextMenu";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { EntitySheet } from "./components/center/EntitySheet";
 import { InboxView } from "./components/center/InboxView";
+import { IndexCardsView } from "./components/center/IndexCardsView";
 import { SettingsView } from "./components/center/SettingsView";
 import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
 import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
-import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon } from "lucide-solid";
+import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
 // Center tabs are typed: files edit prose; entity sheets, the Discovered
 // inbox, and Settings are first-class tabs too (panels browse, center edits).
-export type TabKind = "file" | "entity" | "inbox" | "settings";
+export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards";
 
 interface TabState {
   kind: TabKind;
@@ -84,6 +85,7 @@ const App: Component = () => {
   const [welcome, setWelcome] = createSignal<{ path: string; openedAt: string }[] | null>(null);
   // Bumped when the backend reports filesystem changes; the binder refetches on it
   const [fsVersion, setFsVersion] = createSignal(0);
+  const [metaVersion, setMetaVersion] = createSignal(0);
   // Bumped when codex state changes; codex panel + center tabs refetch
   const [codexVersion, setCodexVersion] = createSignal(0);
   // Editor selection awaiting "promote to codex" (with its cursor line)
@@ -353,6 +355,8 @@ const App: Component = () => {
         pushTab({ kind: "inbox", id: "inbox", title: "Discovered" }, false);
       } else if (ref.kind === "settings") {
         pushTab({ kind: "settings", id: "settings", title: "Settings" }, false);
+      } else if (ref.kind === "cards") {
+        pushTab({ kind: "cards", id: "cards", title: "Index Cards" }, false);
       }
     }
     if (session.activeTab && getTab(session.activeTab)) {
@@ -525,6 +529,7 @@ const App: Component = () => {
   };
 
   const openInboxTab = () => pushTab({ kind: "inbox", id: "inbox", title: "Discovered" });
+  const openCardsTab = () => pushTab({ kind: "cards", id: "cards", title: "Index Cards" });
   const openSettingsTab = () => pushTab({ kind: "settings", id: "settings", title: "Settings" });
 
   // `restoreContent` carries hot-exit journal content: when it differs from
@@ -739,6 +744,7 @@ const App: Component = () => {
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
+    { id: "view.indexCards", title: "View: Index Cards", keybinding: "Mod+Shift+I", run: openCardsTab },
     {
       id: "index.rebuild", title: "Codex: Invalidate & Rebuild Index",
       run: async () => {
@@ -813,6 +819,7 @@ const App: Component = () => {
     if (tab.kind === "entity") return <User size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "inbox") return <InboxIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "settings") return <SettingsIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
+    if (tab.kind === "cards") return <LayoutGrid size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     return null;
   };
 
@@ -822,6 +829,7 @@ const App: Component = () => {
     if (t.kind === "file") return t.filename!;
     if (t.kind === "entity") return `Codex › ${t.title}`;
     if (t.kind === "inbox") return "Codex › Discovered";
+    if (t.kind === "cards") return "Index Cards";
     return "Settings";
   };
 
@@ -847,7 +855,7 @@ const App: Component = () => {
                     <BinderView
                       activeFile={activeFile() || ""}
                       createTrigger={createTrigger()}
-                      refreshVersion={fsVersion()}
+                      refreshVersion={fsVersion() + metaVersion()}
                       onFileSelect={openTab}
                       onNewFile={handleNewFile}
                       onNewFolder={handleNewFolder}
@@ -989,6 +997,14 @@ const App: Component = () => {
                       />
                     )}
                     {tab.kind === "settings" && <SettingsView onStatus={setStatus} />}
+                    {tab.kind === "cards" && (
+                      <IndexCardsView
+                        refreshVersion={fsVersion()}
+                        onOpenScene={openTab}
+                        onStatus={setStatus}
+                        onMetaChanged={() => setMetaVersion(v => v + 1)}
+                      />
+                    )}
                   </div>
                 )}
               </For>

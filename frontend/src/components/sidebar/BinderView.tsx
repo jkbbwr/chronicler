@@ -3,6 +3,7 @@ import { FileText, FolderPlus, FilePlus}  from "lucide-solid";
 import { BinderContextMenu } from "./BinderContextMenu";
 import { BinderTreeItem, type TreeNode } from "./BinderTreeItem";
 import { buildTree, ORDER_FILE, type FileEntry, type OrderMap } from "../../lib/binderTree";
+import { statusColor } from "../center/IndexCardsView";
 import { onCleanup, onMount } from "solid-js";
 
 interface BinderViewProps {
@@ -29,7 +30,15 @@ const fetchBinder = async () => {
   } catch {
     // No order file yet — fall back to dirs-first alphabetical
   }
-  return { files: res.files as FileEntry[], order };
+  const statusColors: Record<string, string> = {};
+  try {
+    const meta = await window.chronicler.invoke("meta/get_all");
+    for (const row of meta.meta) {
+      const color = statusColor(row.status);
+      if (row.status && color !== "transparent") statusColors[row.file] = color;
+    }
+  } catch { /* backend restarting */ }
+  return { files: res.files as FileEntry[], order, statusColors };
 };
 
 export const BinderView: Component<BinderViewProps> = (props) => {
@@ -247,6 +256,7 @@ export const BinderView: Component<BinderViewProps> = (props) => {
             depth={0}
             activeFile={props.activeFile}
             renamingItem={renamingItem()}
+            statusColors={binder()?.statusColors}
             onSelect={props.onFileSelect}
             onContextMenu={handleContextMenu}
             onRenameKeyDown={handleRenameKeyDown}

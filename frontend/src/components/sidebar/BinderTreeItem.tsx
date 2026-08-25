@@ -15,6 +15,8 @@ export interface TreeItemProps {
   depth: number;
   activeFile: string;
   renamingItem: string | null;
+  /** Scene status color by path ("" or missing = no dot). */
+  statusColors?: Record<string, string>;
   onSelect: (path: string) => void;
   onContextMenu: (e: MouseEvent, path: string, is_dir: boolean) => void;
   onRenameKeyDown: (e: KeyboardEvent & { currentTarget: HTMLInputElement }, oldPath: string) => void;
@@ -117,9 +119,12 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
             }}
           />
         ) : (
-          <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis", "font-weight": props.node.is_dir ? 500 : 400 }}>
+          <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis", "font-weight": props.node.is_dir ? 500 : 400, flex: 1 }}>
             {props.node.name.replace(/\.md$/, "")}
           </span>
+        )}
+        {!props.node.is_dir && props.statusColors?.[props.node.path] && (
+          <span style={{ width: "7px", height: "7px", "border-radius": "50%", "flex-shrink": 0, background: props.statusColors[props.node.path] }} />
         )}
       </div>
 
@@ -129,6 +134,7 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
           depth={props.depth + 1}
           activeFile={props.activeFile}
           renamingItem={props.renamingItem}
+          statusColors={props.statusColors}
           onSelect={props.onSelect}
           onContextMenu={props.onContextMenu}
           onRenameKeyDown={props.onRenameKeyDown}
