@@ -77,7 +77,7 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
           <input
             id="binder-rename-input"
             type="text"
-            value={props.node.name.replace(".md", "")}
+            value={props.node.name.replace(/\.md$/, "")}
             onKeyDown={(e) => props.onRenameKeyDown(e, props.node.path)}
             onBlur={props.onRenameBlur}
             onClick={e => e.stopPropagation()}
@@ -94,7 +94,7 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
           />
         ) : (
           <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis", "font-weight": props.node.is_dir ? 500 : 400 }}>
-            {props.node.name.replace(".md", "")}
+            {props.node.name.replace(/\.md$/, "")}
           </span>
         )}
       </div>

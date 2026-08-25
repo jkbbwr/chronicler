@@ -16,7 +16,17 @@ let nextRequestId = 1;
 // Parse CLI flags (e.g. `--project /path/to/folder`)
 const args = process.argv.slice(2);
 const projectIdx = args.indexOf("--project");
-let projectPath = projectIdx >= 0 ? args[projectIdx + 1] : process.env.PROJECT_DIR;
+// The most recently opened project; backend restarts (e.g. from the dev
+// watcher) must reuse it rather than falling back to the default cwd.
+let currentProjectPath: string | undefined =
+  projectIdx >= 0 ? args[projectIdx + 1] : process.env.PROJECT_DIR;
+
+function rejectAllPending(reason: string) {
+  for (const { reject } of pendingRequests.values()) {
+    reject(new Error(reason));
+  }
+  pendingRequests.clear();
+}
 
 function setupMenu() {
   const isMac = process.platform === 'darwin';
@@ -99,14 +109,17 @@ function setupMenu() {
 }
 
 function startBackend(projectPath?: string) {
+  if (projectPath) currentProjectPath = projectPath;
+
   if (rustProcess) {
     console.log("Restarting Rust backend...");
+    rejectAllPending("Backend restarting");
     rustProcess.kill();
   }
 
   const isDev = !app.isPackaged;
-  const cwd = projectPath || (isDev ? path.join(__dirname, "../../") : process.cwd());
-  
+  const cwd = currentProjectPath || (isDev ? path.join(__dirname, "../../") : process.cwd());
+
   if (isDev) {
     rustProcess = spawn("cargo", ["run", "--manifest-path", path.join(__dirname, "../../backend/Cargo.toml")], {
       cwd: cwd,
@@ -115,6 +128,8 @@ function startBackend(projectPath?: string) {
     const binaryPath = path.join(process.resourcesPath, "chronicler-backend");
     rustProcess = spawn(binaryPath, [], { cwd: cwd });
   }
+
+  const proc = rustProcess;
 
   rustProcess.stderr?.on("data", (data) => {
     console.log(`[Rust] ${data}`);
@@ -145,6 +160,11 @@ function startBackend(projectPath?: string) {
 
   rustProcess.on("exit", (code) => {
     console.log(`Backend process exited with code ${code}`);
+    // Only reject if this is still the live process; a superseded process
+    // exiting after a restart must not kill the new process's requests.
+    if (rustProcess === proc) {
+      rejectAllPending(`Backend exited with code ${code}`);
+    }
   });
 }
 

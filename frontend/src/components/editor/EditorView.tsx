@@ -1,9 +1,10 @@
-import { type Component, onCleanup, onMount } from "solid-js";
-import { EditorState } from "@codemirror/state";
+import { type Component, createEffect, onCleanup, onMount } from "solid-js";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView as CodeMirrorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { workbench } from "../../stores/workbench";
 
 interface EditorProps {
   initialContent: string;
@@ -15,10 +16,12 @@ export const EditorView: Component<EditorProps> = (props) => {
   let editorRef!: HTMLDivElement;
   let view: CodeMirrorView;
 
-  const proseTheme = CodeMirrorView.theme({
+  const themeCompartment = new Compartment();
+
+  const proseTheme = (fontFamily: string, fontSize: number) => CodeMirrorView.theme({
     "&": {
-      fontSize: "16px",
-      fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
+      fontSize: `${fontSize}px`,
+      fontFamily,
       height: "100%",
       backgroundColor: "transparent !important",
     },
@@ -68,7 +71,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         saveKeymap,
         markdown({ base: markdownLanguage }),
         oneDark,
-        proseTheme,
+        themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
         CodeMirrorView.lineWrapping,
         updateListener,
       ],
@@ -77,6 +80,12 @@ export const EditorView: Component<EditorProps> = (props) => {
     view = new CodeMirrorView({
       state,
       parent: editorRef,
+    });
+
+    // Apply settings changes to the live editor
+    createEffect(() => {
+      const theme = proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize);
+      view.dispatch({ effects: themeCompartment.reconfigure(theme) });
     });
 
     onCleanup(() => {

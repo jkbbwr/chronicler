@@ -28,8 +28,10 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
       setSelectedIndex(0);
       setTimeout(() => inputRef?.focus(), 50);
       window.chronicler.invoke("project/list_files").then((res: any) => {
-        // Backend now returns array of objects { name: string, is_dir: boolean }
-        const fileNames = res.files.map((f: any) => typeof f === "string" ? f : f.name);
+        // Only files are openable — directories would fail document/read
+        const fileNames = res.files
+          .filter((f: any) => !f.is_dir)
+          .map((f: any) => f.name as string);
         setFiles(fileNames);
       });
     }
@@ -51,10 +53,10 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
     const items = filteredItems();
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((s) => (s + 1) % items.length);
+      if (items.length > 0) setSelectedIndex((s) => (s + 1) % items.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSelectedIndex((s) => (s - 1 + items.length) % items.length);
+      if (items.length > 0) setSelectedIndex((s) => (s - 1 + items.length) % items.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (items[selectedIndex()]) {

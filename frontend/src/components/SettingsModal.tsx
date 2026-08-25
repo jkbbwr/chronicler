@@ -1,5 +1,5 @@
 import { type Component, Show, createSignal } from "solid-js";
-import { workbench, setWorkbench } from "../stores/workbench";
+import { workbench, setWorkbench, updateSettings } from "../stores/workbench";
 import { X, Palette, TextCursor, Bot } from "lucide-solid";
 
 export const SettingsModal: Component = () => {
@@ -64,24 +64,34 @@ export const SettingsModal: Component = () => {
                 
                 <div style={{ "margin-bottom": "25px" }}>
                   <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>Font Family</label>
-                  <input type="text" value="ui-serif, Georgia, Cambria" style={{ width: "100%", padding: "10px", background: "var(--bg-color)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", outline: "none", "font-size": "13px" }} />
+                  <input
+                    type="text"
+                    value={workbench.settings.fontFamily}
+                    onChange={(e) => updateSettings({ fontFamily: e.currentTarget.value })}
+                    style={{ width: "100%", padding: "10px", background: "var(--bg-color)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", outline: "none", "font-size": "13px" }}
+                  />
                   <div style={{ "font-size": "11px", color: "var(--text-faint)", "margin-top": "6px" }}>The font family used for the main text editor.</div>
                 </div>
 
                 <div style={{ "margin-bottom": "25px" }}>
                   <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>Font Size (px)</label>
-                  <input type="number" value="16" style={{ width: "100%", padding: "10px", background: "var(--bg-color)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", outline: "none", "font-size": "13px" }} />
+                  <input
+                    type="number"
+                    min="8"
+                    max="72"
+                    value={workbench.settings.fontSize}
+                    onChange={(e) => {
+                      const size = parseInt(e.currentTarget.value, 10);
+                      if (!Number.isNaN(size) && size >= 8 && size <= 72) updateSettings({ fontSize: size });
+                    }}
+                    style={{ width: "100%", padding: "10px", background: "var(--bg-color)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", outline: "none", "font-size": "13px" }}
+                  />
                 </div>
               </Show>
 
               <Show when={activeTab() === "ai"}>
                 <h2 style={{ "font-size": "18px", color: "var(--text-main)", "margin-bottom": "20px", "font-weight": 500 }}>AI Integrations</h2>
-                
-                <div style={{ "margin-bottom": "25px" }}>
-                  <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>OpenAI API Key</label>
-                  <input type="password" placeholder="sk-..." style={{ width: "100%", padding: "10px", background: "var(--bg-color)", border: "1px solid var(--border-color)", color: "var(--text-main)", "border-radius": "6px", outline: "none", "font-size": "13px" }} />
-                  <div style={{ "font-size": "11px", color: "var(--text-faint)", "margin-top": "6px" }}>Stored locally in your Chronicler workspace config.</div>
-                </div>
+                <div style={{ "font-size": "13px", color: "var(--text-faint)" }}>AI integration is not implemented yet.</div>
               </Show>
 
               <Show when={activeTab() === "appearance"}>

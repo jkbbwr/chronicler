@@ -1,4 +1,5 @@
 import { createSignal, onMount, onCleanup, For, Show, type Component } from "solid-js";
+import { createStore } from "solid-js/store";
 import { workbench, setWorkbench } from "./stores/workbench";
 import { EditorView } from "./components/editor/EditorView";
 import { BinderView } from "./components/sidebar/BinderView";
@@ -19,12 +20,17 @@ interface TabState {
 
 const App: Component = () => {
   const [status, setStatus] = createSignal<string>("Initializing...");
-  const [tabs, setTabs] = createSignal<TabState[]>([]);
+  // Store, not signal-of-array: field updates must preserve item identity so
+  // <For> never disposes a row (and its CodeMirror instance) on keystrokes.
+  const [tabs, setTabs] = createStore<TabState[]>([]);
   const [activeTab, setActiveTab] = createSignal<string | null>(null);
   const [showPalette, setShowPalette] = createSignal(false);
   const [paletteInitial, setPaletteInitial] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<{x: number, y: number, filename: string} | null>(null);
   const [createTrigger, setCreateTrigger] = createSignal<"file" | "folder" | null>(null);
+
+  const tabIndex = (filename: string) => tabs.findIndex(t => t.filename === filename);
+  const getTab = (filename: string) => tabs.find(t => t.filename === filename);
 
   onMount(async () => {
     const handleGlobalClick = () => setContextMenu(null);
@@ -62,7 +68,6 @@ const App: Component = () => {
     try {
       const info = await window.chronicler.invoke("system/info");
       setStatus(`Backend connected: v${info.version}`);
-      await openTab("Chapter 1.md");
     } catch (err: any) {
       setStatus(`Failed to connect: ${err.message}`);
     }
@@ -79,11 +84,15 @@ const App: Component = () => {
       setTimeout(() => setCreateTrigger(null), 100);
     } else if (action === "command-palette") {
       setShowPalette(true);
-    } else if (action === "save-file" || action === "save-all") {
+    } else if (action === "save-file") {
       const current = activeTab();
       if (current) {
-        const tab = tabs().find(t => t.filename === current);
+        const tab = getTab(current);
         if (tab) handleSave(current, tab.content);
+      }
+    } else if (action === "save-all") {
+      for (const tab of tabs) {
+        if (tab.isDirty) handleSave(tab.filename, tab.content);
       }
     } else if (action === "project-opened") {
       setTabs([]);
@@ -95,81 +104,101 @@ const App: Component = () => {
     } else if (action === "zen-mode") {
       setWorkbench("zenMode", z => !z);
     } else if (action.startsWith("save-as:")) {
+      // Limitation: the backend only writes inside the project root, so
+      // Save As keeps the chosen basename and saves it at the root.
       const fullPath = action.split("save-as:")[1];
       const filename = fullPath.split("/").pop() || "Untitled.md";
       const current = activeTab();
       if (current) {
-        const tab = tabs().find(t => t.filename === current);
+        const tab = getTab(current);
         if (tab) {
-          // For a real IDE, save to the exact path, but our backend currently saves relative to project root
-          // So we just save it as the filename
-          handleSave(filename, tab.content).then(() => {
-            openTab(filename);
-            closeOthers(filename);
-          });
+          handleSave(filename, tab.content).then(ok => { if (ok) openTab(filename); });
         }
       }
     }
   };
 
   const openTab = async (filename: string) => {
-    const existing = tabs().find(t => t.filename === filename);
+    const existing = getTab(filename);
     if (existing) {
       setActiveTab(filename);
       return;
     }
 
     const newTab: TabState = { filename, content: "", isDirty: false, isLoading: true };
-    setTabs(prev => [...prev, newTab]);
+    setTabs(tabs.length, newTab);
     setActiveTab(filename);
 
     try {
       const doc = await window.chronicler.invoke("document/read", { rel_path: filename });
-      setTabs(prev => prev.map(t => t.filename === filename ? { ...t, content: doc.content, isLoading: false } : t));
+      const idx = tabIndex(filename); // may be gone if closed while loading
+      if (idx >= 0) setTabs(idx, { content: doc.content, isLoading: false });
     } catch (err: any) {
-      setTabs(prev => prev.map(t => t.filename === filename ? { ...t, content: `# ${filename.replace(".md", "")}\n\n`, isLoading: false, isDirty: true } : t));
+      // Don't fabricate an editable tab over a file we couldn't read — a
+      // later save would overwrite the real file with placeholder text.
+      setTabs(prev => prev.filter(t => t.filename !== filename));
+      if (activeTab() === filename) setActiveTab(tabs.length > 0 ? tabs[tabs.length - 1].filename : null);
+      setStatus(`Failed to open ${filename}: ${err.message}`);
     }
   };
 
-  const closeTab = (filename: string, e?: Event, force?: boolean) => {
+  const removeTabs = (predicate: (t: TabState) => boolean) => {
+    const remaining = tabs.filter(t => !predicate(t));
+    setTabs(remaining.slice());
+    const current = activeTab();
+    if (current && !remaining.some(t => t.filename === current)) {
+      setActiveTab(remaining.length > 0 ? remaining[remaining.length - 1].filename : null);
+    }
+  };
+
+  const closeTab = async (filename: string, e?: Event, force?: boolean) => {
     if (e) e.stopPropagation();
-    const currentTabs = tabs();
-    const tabToClose = currentTabs.find(t => t.filename === filename);
-    
+    const tabToClose = getTab(filename);
+
     if (tabToClose?.isDirty && !force) {
-      if (!window.confirm(`Save changes to ${filename}?`)) return;
+      if (!window.confirm(`"${filename}" has unsaved changes. Save before closing?`)) {
+        return; // Keep the tab open rather than silently discarding changes
+      }
+      if (!await handleSave(filename, tabToClose.content)) {
+        return; // Save failed — don't close and lose the changes
+      }
     }
-    
-    const newTabs = currentTabs.filter(t => t.filename !== filename);
-    setTabs(newTabs);
-    if (activeTab() === filename) {
-      setActiveTab(newTabs.length > 0 ? newTabs[newTabs.length - 1].filename : null);
-    }
+
+    removeTabs(t => t.filename === filename);
   };
 
-  let autoSaveTimer: any = null;
+  // One timer per file so switching documents doesn't cancel a pending autosave
+  const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  onCleanup(() => autoSaveTimers.forEach(clearTimeout));
 
   const handleEditorChange = (filename: string, newContent: string) => {
-    setTabs(prev => prev.map(t => t.filename === filename ? { ...t, content: newContent, isDirty: true } : t));
-    
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(() => {
-      const tab = tabs().find(t => t.filename === filename);
+    const idx = tabIndex(filename);
+    if (idx < 0) return;
+    setTabs(idx, { content: newContent, isDirty: true });
+
+    const existing = autoSaveTimers.get(filename);
+    if (existing) clearTimeout(existing);
+    autoSaveTimers.set(filename, setTimeout(() => {
+      autoSaveTimers.delete(filename);
+      const tab = getTab(filename);
       if (tab && tab.isDirty) {
         handleSave(filename, tab.content);
       }
-    }, 2000);
+    }, 2000));
   };
 
-  const handleSave = async (filename: string, contentToSave: string) => {
+  const handleSave = async (filename: string, contentToSave: string): Promise<boolean> => {
     try {
       setStatus("Saving...");
       await window.chronicler.invoke("document/save", { rel_path: filename, content: contentToSave });
-      setTabs(prev => prev.map(t => t.filename === filename ? { ...t, isDirty: false } : t));
+      const idx = tabIndex(filename);
+      if (idx >= 0) setTabs(idx, "isDirty", false);
       setStatus("Saved locally");
       setTimeout(() => setStatus("Backend connected"), 2000);
+      return true;
     } catch (err: any) {
       setStatus(`Save failed: ${err.message}`);
+      return false;
     }
   };
 
@@ -192,9 +221,17 @@ const App: Component = () => {
   const handleRenameItem = async (oldName: string, newName: string) => {
     try {
       await window.chronicler.invoke("project/rename", { old_path: oldName, new_path: newName });
-      // Update tabs if they are open
-      setTabs(tabs().map(t => t.filename === oldName ? { ...t, filename: newName } : t));
-      if (activeTab() === oldName) setActiveTab(newName);
+      // Update open tabs, including files inside a renamed folder
+      const retarget = (filename: string) =>
+        filename === oldName ? newName
+        : filename.startsWith(oldName + "/") ? newName + filename.slice(oldName.length)
+        : filename;
+      tabs.forEach((t, i) => {
+        const updated = retarget(t.filename);
+        if (updated !== t.filename) setTabs(i, "filename", updated);
+      });
+      const current = activeTab();
+      if (current) setActiveTab(retarget(current));
     } catch (err: any) {
       alert(`Failed to rename: ${err.message}`);
     }
@@ -204,27 +241,24 @@ const App: Component = () => {
     if (!window.confirm(`Are you sure you want to delete '${name}'? This cannot be undone.`)) return;
     try {
       await window.chronicler.invoke("project/delete", { path: name });
-      closeTab(name, new Event('click') as any, true); // Force close without saving
+      // Close the tab itself and, for folders, any tabs of files inside it
+      removeTabs(t => t.filename === name || t.filename.startsWith(name + "/"));
     } catch (err: any) {
       alert(`Failed to delete: ${err.message}`);
     }
   };
 
-  const closeOthers = (filename: string) => {
-    const toClose = tabs().filter(t => t.filename !== filename);
-    let allSaved = true;
-    for (const tab of toClose) {
+  const closeOthers = async (filename: string) => {
+    for (const tab of tabs.filter(t => t.filename !== filename)) {
       if (tab.isDirty) {
-        if (!window.confirm(`Save changes to ${tab.filename}?`)) {
-          allSaved = false;
-          break;
+        if (!window.confirm(`"${tab.filename}" has unsaved changes. Save before closing?`)) {
+          return; // Abort rather than discard unsaved work
         }
+        if (!await handleSave(tab.filename, tab.content)) return;
       }
     }
-    if (allSaved) {
-      setTabs(tabs().filter(t => t.filename === filename));
-      setActiveTab(filename);
-    }
+    removeTabs(t => t.filename !== filename);
+    setActiveTab(filename);
   };
 
   return (
@@ -235,7 +269,7 @@ const App: Component = () => {
 
       <div class="main-layout" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {!workbench.zenMode && <ActivityBar />}
-        
+
         <div style={{ display: 'flex', 'flex-direction': 'column', flex: 1, overflow: 'hidden' }}>
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             {!workbench.zenMode && workbench.panels.left.visible && (
@@ -246,10 +280,10 @@ const App: Component = () => {
                 </div>
                 <div class="panel-content" style={{ padding: 0, flex: 1 }}>
                   {workbench.panels.left.activeView === "binder" && (
-                    <BinderView 
-                      activeFile={activeTab() || ""} 
+                    <BinderView
+                      activeFile={activeTab() || ""}
                       createTrigger={createTrigger()}
-                      onFileSelect={openTab} 
+                      onFileSelect={openTab}
                       onNewFile={handleNewFile}
                       onNewFolder={handleNewFolder}
                       onRename={handleRenameItem}
@@ -268,17 +302,17 @@ const App: Component = () => {
           <div class="panel panel-center" style={{ flex: 1, display: 'flex', 'flex-direction': 'column' }}>
             {!workbench.zenMode && (
               <div class="editor-tabs" style={{ display: 'flex', 'overflow-x': 'auto' }}>
-                  <For each={tabs()}>
+                  <For each={tabs}>
                     {(tab) => (
-                      <div 
+                      <div
                         class={`tab ${activeTab() === tab.filename ? "active" : ""}`}
                         onClick={() => setActiveTab(tab.filename)}
                         onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, filename: tab.filename }); }}
                         style={{ cursor: 'pointer', display: 'flex', 'align-items': 'center', gap: '8px' }}
                       >
                         <span>{tab.filename}</span>
-                        <div 
-                          onClick={(e) => closeTab(tab.filename, e)} 
+                        <div
+                          onClick={(e) => closeTab(tab.filename, e)}
                           style={{ display: 'flex', 'align-items': 'center', opacity: 0.7 }}
                           onMouseEnter={e => e.currentTarget.style.opacity = '1'}
                           onMouseLeave={e => e.currentTarget.style.opacity = '0.7'}
@@ -297,7 +331,7 @@ const App: Component = () => {
             </div>
 
             <div class="editor-content" style={{ padding: 0, flex: 1, position: 'relative' }}>
-              <Show when={tabs().length === 0}>
+              <Show when={tabs.length === 0}>
                 <div class="empty-state">
                   <div class="empty-state-logo">Chronicler</div>
                   <div class="shortcut-row">
@@ -318,13 +352,13 @@ const App: Component = () => {
                   </div>
                 </div>
               </Show>
-              <For each={tabs()}>
+              <For each={tabs}>
                 {(tab) => (
                   <div style={{ display: activeTab() === tab.filename ? 'block' : 'none', height: '100%' }}>
                     {!tab.isLoading && (
-                      <EditorView 
-                        initialContent={tab.content} 
-                        onSave={(c) => handleSave(tab.filename, c)} 
+                      <EditorView
+                        initialContent={tab.content}
+                        onSave={(c) => handleSave(tab.filename, c)}
                         onChange={(c) => handleEditorChange(tab.filename, c)}
                       />
                     )}
@@ -381,25 +415,25 @@ const App: Component = () => {
           <span>{status()}</span>
         </div>
         <div style={{ display: 'flex', gap: '15px' }}>
-          <span>{activeTab() ? tabs().find(t => t.filename === activeTab())?.content.trim().split(/\s+/).filter(w => w.length > 0).length + " Words" : ""}</span>
+          <span>{activeTab() ? getTab(activeTab()!)?.content.trim().split(/\s+/).filter(w => w.length > 0).length + " Words" : ""}</span>
           <span>Markdown</span>
         </div>
       </div>
 
-      <CommandPalette 
-        isOpen={showPalette()} 
+      <CommandPalette
+        isOpen={showPalette()}
         initialQuery={paletteInitial()}
-        onClose={() => setShowPalette(false)} 
-        onSelectFile={openTab} 
+        onClose={() => setShowPalette(false)}
+        onSelectFile={openTab}
         onSelectCommand={handleMenuCommand}
       />
       {contextMenu() && (
-        <TabContextMenu 
-          x={contextMenu()!.x} 
-          y={contextMenu()!.y} 
+        <TabContextMenu
+          x={contextMenu()!.x}
+          y={contextMenu()!.y}
           filename={contextMenu()!.filename}
           onClose={() => setContextMenu(null)}
-          onCloseTab={(f) => closeTab(f, new Event('click'))}
+          onCloseTab={(f) => closeTab(f)}
           onCloseOthers={closeOthers}
         />
       )}

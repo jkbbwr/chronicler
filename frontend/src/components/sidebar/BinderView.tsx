@@ -8,10 +8,10 @@ interface BinderViewProps {
   activeFile: string;
   createTrigger?: "file" | "folder" | null;
   onFileSelect: (filename: string) => void;
-  onNewFile: (name: string) => void;
-  onNewFolder?: (name: string) => void;
-  onRename?: (oldName: string, newName: string) => void;
-  onDelete?: (name: string) => void;
+  onNewFile: (name: string) => Promise<void> | void;
+  onNewFolder?: (name: string) => Promise<void> | void;
+  onRename?: (oldName: string, newName: string) => Promise<void> | void;
+  onDelete?: (name: string) => Promise<void> | void;
 }
 
 interface FileEntry {
@@ -44,22 +44,21 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     else if (props.createTrigger === "folder") startCreate("folder", "");
   });
 
-  const handleInputKeyDown = (e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
+  const handleInputKeyDown = async (e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
     if (e.key === "Enter") {
       const val = e.currentTarget.value.trim();
-      if (val) {
-        const filePrefix = creatingFile();
-        const folderPrefix = creatingFolder();
-        
-        if (typeof filePrefix === "string") {
-          props.onNewFile(filePrefix ? `${filePrefix}/${val}` : val);
-        } else if (typeof folderPrefix === "string" && props.onNewFolder) {
-          props.onNewFolder(folderPrefix ? `${folderPrefix}/${val}` : val);
-        }
-      }
+      const filePrefix = creatingFile();
+      const folderPrefix = creatingFolder();
       setCreatingFile(false);
       setCreatingFolder(false);
-      setTimeout(refetch, 100);
+      if (val) {
+        if (typeof filePrefix === "string") {
+          await props.onNewFile(filePrefix ? `${filePrefix}/${val}` : val);
+        } else if (typeof folderPrefix === "string" && props.onNewFolder) {
+          await props.onNewFolder(folderPrefix ? `${folderPrefix}/${val}` : val);
+        }
+        refetch();
+      }
     } else if (e.key === "Escape") {
       setCreatingFile(false);
       setCreatingFolder(false);
@@ -75,19 +74,24 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     }, 50);
   };
 
-  const handleRenameKeyDown = (e: KeyboardEvent & { currentTarget: HTMLInputElement }, oldName: string) => {
+  const handleRenameKeyDown = async (e: KeyboardEvent & { currentTarget: HTMLInputElement }, oldName: string) => {
     if (e.key === "Enter") {
-      const val = e.currentTarget.value.trim();
+      let val = e.currentTarget.value.trim();
+      setRenamingItem(null);
       if (val) {
+        // The input shows the name without ".md", so restore it — otherwise
+        // the renamed file loses its extension and vanishes from the binder.
+        if (oldName.endsWith(".md") && !val.endsWith(".md")) {
+          val += ".md";
+        }
         const parts = oldName.split("/");
         parts[parts.length - 1] = val;
         const newPath = parts.join("/");
-        if (newPath !== oldName) {
-          if (props.onRename) props.onRename(oldName, newPath);
-          setTimeout(refetch, 100);
+        if (newPath !== oldName && props.onRename) {
+          await props.onRename(oldName, newPath);
+          refetch();
         }
       }
-      setRenamingItem(null);
     } else if (e.key === "Escape") {
       setRenamingItem(null);
     }
@@ -101,9 +105,9 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     }, 50);
   };
 
-  const handleDelete = (name: string) => {
-    if (props.onDelete) props.onDelete(name);
-    setTimeout(refetch, 100);
+  const handleDelete = async (name: string) => {
+    if (props.onDelete) await props.onDelete(name);
+    refetch();
   };
 
   const handleDragStart = (e: DragEvent, name: string) => {
@@ -118,9 +122,9 @@ export const BinderView: Component<BinderViewProps> = (props) => {
 
     const baseName = draggedName.split("/").pop();
     const newPath = `${folderName}/${baseName}`;
-    if (newPath !== draggedName) {
-      if (props.onRename) props.onRename(draggedName, newPath);
-      setTimeout(refetch, 100);
+    if (newPath !== draggedName && props.onRename) {
+      await props.onRename(draggedName, newPath);
+      refetch();
     }
   };
 
@@ -130,9 +134,9 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     if (!draggedName || !draggedName.includes("/")) return; // Already at root
 
     const baseName = draggedName.split("/").pop();
-    if (baseName && baseName !== draggedName) {
-      if (props.onRename) props.onRename(draggedName, baseName);
-      setTimeout(refetch, 100);
+    if (baseName && baseName !== draggedName && props.onRename) {
+      await props.onRename(draggedName, baseName);
+      refetch();
     }
   };
 

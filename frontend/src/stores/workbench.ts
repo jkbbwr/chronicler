@@ -18,15 +18,38 @@ export interface PanelState {
   views: ViewId[];
 }
 
+export interface EditorSettings {
+  fontFamily: string;
+  fontSize: number;
+}
+
 export interface WorkbenchState {
   zenMode: boolean;
   isSettingsOpen: boolean;
+  settings: EditorSettings;
   panels: Record<PanelId, PanelState>;
 }
+
+const DEFAULT_SETTINGS: EditorSettings = {
+  fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
+  fontSize: 16,
+};
+
+const SETTINGS_KEY = "chronicler-settings";
+
+const loadSettings = (): EditorSettings => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+};
 
 export const [workbench, setWorkbench] = createStore<WorkbenchState>({
   zenMode: false,
   isSettingsOpen: false,
+  settings: loadSettings(),
   panels: {
     left: {
       id: "left",
@@ -58,6 +81,15 @@ export const [workbench, setWorkbench] = createStore<WorkbenchState>({
     },
   },
 });
+
+export const updateSettings = (patch: Partial<EditorSettings>) => {
+  setWorkbench("settings", patch);
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...workbench.settings }));
+  } catch {
+    // Persistence is best-effort; the in-memory value still applies
+  }
+};
 
 export const togglePanel = (panel: PanelId) => {
   setWorkbench("panels", panel, "visible", (v) => !v);

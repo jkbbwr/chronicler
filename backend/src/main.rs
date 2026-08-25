@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -7,13 +9,44 @@ use tracing_subscriber::EnvFilter;
 mod rpc;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
 
-fn get_files_recursive(dir: &std::path::Path, prefix: &str, files: &mut Vec<serde_json::Value>) {
+/// Resolve a client-supplied relative path against the project root,
+/// rejecting anything that could escape it (absolute paths, `..`).
+fn resolve_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let p = Path::new(rel);
+    if p.is_absolute() {
+        return Err("Absolute paths are not allowed".to_string());
+    }
+    for comp in p.components() {
+        match comp {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => return Err("Path escapes project root".to_string()),
+        }
+    }
+    Ok(root.join(p))
+}
+
+/// Write via a temp file + rename so a crash mid-write can't truncate the target.
+fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid file name"))?;
+    // Dot-prefixed so it never shows up in project/list_files if a rename fails.
+    let tmp = path.with_file_name(format!(".{}.tmp", file_name));
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(content.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+}
+
+fn get_files_recursive(dir: &Path, prefix: &str, files: &mut Vec<serde_json::Value>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             let is_dir = path.is_dir();
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            
+
             if file_name.starts_with('.') { continue; }
 
             let rel_path = if prefix.is_empty() {
@@ -40,13 +73,14 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    info!("Chronicler backend started. Listening on stdin for JSON-RPC...");
+    let root: Arc<PathBuf> = Arc::new(std::env::current_dir()?.canonicalize()?);
+    info!("Chronicler backend started. Project root: {}", root.display());
 
     // Channel to send responses back to stdout
     let (tx_out, mut rx_out) = mpsc::channel::<String>(100);
 
     // Spawn stdout writer task
-    tokio::spawn(async move {
+    let writer = tokio::spawn(async move {
         while let Some(msg) = rx_out.recv().await {
             println!("{}", msg);
         }
@@ -56,11 +90,13 @@ async fn main() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin).lines();
 
+    let mut tasks = tokio::task::JoinSet::new();
     while let Ok(Some(line)) = reader.next_line().await {
         let tx = tx_out.clone();
-        
-        tokio::spawn(async move {
-            let response = handle_request_line(&line).await;
+        let root = root.clone();
+
+        tasks.spawn(async move {
+            let response = handle_request_line(&root, &line).await;
             if let Some(resp) = response {
                 if let Ok(json_str) = serde_json::to_string(&resp) {
                     let _ = tx.send(json_str).await;
@@ -69,11 +105,17 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Stdin closed: finish in-flight requests and flush all queued responses
+    // before exiting, or the last responses (e.g. a save on quit) get dropped.
+    while tasks.join_next().await.is_some() {}
+    drop(tx_out);
+    let _ = writer.await;
+
     info!("Stdin closed. Backend shutting down.");
     Ok(())
 }
 
-async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
+async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse> {
     if line.trim().is_empty() {
         return None;
     }
@@ -100,9 +142,12 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
             if rel_path.is_empty() {
                 Err((-32602, "Missing rel_path".to_string()))
             } else {
-                match std::fs::read_to_string(rel_path) {
-                    Ok(content) => Ok(json!({ "content": content })),
-                    Err(e) => Err((-32000, format!("Failed to read file: {}", e))),
+                match resolve_path(root, rel_path) {
+                    Err(e) => Err((-32602, e)),
+                    Ok(path) => match std::fs::read_to_string(&path) {
+                        Ok(content) => Ok(json!({ "content": content })),
+                        Err(e) => Err((-32000, format!("Failed to read file: {}", e))),
+                    },
                 }
             }
         },
@@ -112,15 +157,18 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
             if rel_path.is_empty() {
                 Err((-32602, "Missing rel_path".to_string()))
             } else {
-                match std::fs::write(rel_path, content) {
-                    Ok(_) => Ok(json!({ "success": true })),
-                    Err(e) => Err((-32000, format!("Failed to save file: {}", e))),
+                match resolve_path(root, rel_path) {
+                    Err(e) => Err((-32602, e)),
+                    Ok(path) => match atomic_write(&path, content) {
+                        Ok(_) => Ok(json!({ "success": true })),
+                        Err(e) => Err((-32000, format!("Failed to save file: {}", e))),
+                    },
                 }
             }
         },
         "project/list_files" => {
             let mut files = Vec::new();
-            get_files_recursive(std::path::Path::new("."), "", &mut files);
+            get_files_recursive(root, "", &mut files);
             // Sort files: directories first, then alphabetical
             files.sort_by(|a, b| {
                 let a_is_dir = a["is_dir"].as_bool().unwrap_or(false);
@@ -130,7 +178,7 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
                 } else if !a_is_dir && b_is_dir {
                     std::cmp::Ordering::Greater
                 } else {
-                    a["name"].as_str().unwrap().cmp(b["name"].as_str().unwrap())
+                    a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
                 }
             });
             Ok(json!({ "files": files }))
@@ -140,9 +188,12 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
             if rel_path.is_empty() {
                 Err((-32602, "Missing rel_path".to_string()))
             } else {
-                match std::fs::create_dir_all(rel_path) {
-                    Ok(_) => Ok(json!({ "success": true })),
-                    Err(e) => Err((-32000, format!("Failed to create folder: {}", e))),
+                match resolve_path(root, rel_path) {
+                    Err(e) => Err((-32602, e)),
+                    Ok(path) => match std::fs::create_dir_all(&path) {
+                        Ok(_) => Ok(json!({ "success": true })),
+                        Err(e) => Err((-32000, format!("Failed to create folder: {}", e))),
+                    },
                 }
             }
         },
@@ -152,9 +203,12 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
             if old_path.is_empty() || new_path.is_empty() {
                 Err((-32602, "Missing old_path or new_path".to_string()))
             } else {
-                match std::fs::rename(old_path, new_path) {
-                    Ok(_) => Ok(json!({ "success": true })),
-                    Err(e) => Err((-32000, format!("Failed to rename: {}", e))),
+                match (resolve_path(root, old_path), resolve_path(root, new_path)) {
+                    (Err(e), _) | (_, Err(e)) => Err((-32602, e)),
+                    (Ok(old), Ok(new)) => match std::fs::rename(&old, &new) {
+                        Ok(_) => Ok(json!({ "success": true })),
+                        Err(e) => Err((-32000, format!("Failed to rename: {}", e))),
+                    },
                 }
             }
         },
@@ -163,15 +217,19 @@ async fn handle_request_line(line: &str) -> Option<JsonRpcResponse> {
             if path.is_empty() {
                 Err((-32602, "Missing path".to_string()))
             } else {
-                let p = std::path::Path::new(path);
-                let result = if p.is_dir() {
-                    std::fs::remove_dir_all(p)
-                } else {
-                    std::fs::remove_file(p)
-                };
-                match result {
-                    Ok(_) => Ok(json!({ "success": true })),
-                    Err(e) => Err((-32000, format!("Failed to delete: {}", e))),
+                match resolve_path(root, path) {
+                    Err(e) => Err((-32602, e)),
+                    Ok(p) => {
+                        let result = if p.is_dir() {
+                            std::fs::remove_dir_all(&p)
+                        } else {
+                            std::fs::remove_file(&p)
+                        };
+                        match result {
+                            Ok(_) => Ok(json!({ "success": true })),
+                            Err(e) => Err((-32000, format!("Failed to delete: {}", e))),
+                        }
+                    },
                 }
             }
         },

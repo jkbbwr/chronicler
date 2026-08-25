@@ -14,8 +14,8 @@ export default defineConfig({
         // Preload scripts entry
         input: "electron/preload.ts",
       },
-      // Optional: Use Node.js API in the Renderer process
-      renderer: {},
+      // No `renderer` option: the renderer talks to the backend via the
+      // contextBridge preload only and must not have Node access.
     }),
   ],
   resolve: {
