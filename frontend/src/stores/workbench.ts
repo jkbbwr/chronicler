@@ -39,6 +39,8 @@ export interface EditorSettings {
   fontSize: number;
   editorMode: EditorMode;
   theme: ThemeId;
+  typewriterMode: boolean;
+  focusMode: boolean;
 }
 
 export interface WorkbenchState {
@@ -53,6 +55,8 @@ const DEFAULT_SETTINGS: EditorSettings = {
   fontSize: 16,
   editorMode: "live",
   theme: "dark",
+  typewriterMode: false,
+  focusMode: false,
 };
 
 const SETTINGS_KEY = "chronicler-settings";

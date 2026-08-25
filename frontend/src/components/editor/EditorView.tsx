@@ -8,6 +8,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
+import { typewriterScroll, focusMode } from "./writingModes";
 
 // Chrome for light themes; dark themes use oneDark
 const cmLight = [
@@ -43,6 +44,12 @@ export const EditorView: Component<EditorProps> = (props) => {
   const themeCompartment = new Compartment();
   const modeCompartment = new Compartment();
   const colorCompartment = new Compartment();
+  const writingCompartment = new Compartment();
+
+  const writingExtensions = () => [
+    ...(workbench.settings.typewriterMode ? [typewriterScroll()] : []),
+    ...(workbench.settings.focusMode ? [focusMode()] : []),
+  ];
 
   const proseTheme = (fontFamily: string, fontSize: number) => CodeMirrorView.theme({
     "&": {
@@ -100,6 +107,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         colorCompartment.of(cmThemeFor(resolvedTheme())),
         themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
         modeCompartment.of(workbench.settings.editorMode === "live" ? livePreview() : []),
+        writingCompartment.of(writingExtensions()),
         CodeMirrorView.lineWrapping,
         // Native spellcheck needs these on the contenteditable element
         CodeMirrorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
@@ -144,6 +152,10 @@ export const EditorView: Component<EditorProps> = (props) => {
 
     createEffect(() => {
       view.dispatch({ effects: colorCompartment.reconfigure(cmThemeFor(resolvedTheme())) });
+    });
+
+    createEffect(() => {
+      view.dispatch({ effects: writingCompartment.reconfigure(writingExtensions()) });
     });
 
     onCleanup(() => {

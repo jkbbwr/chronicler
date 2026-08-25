@@ -492,6 +492,8 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
     { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
+    { id: "editor.toggleTypewriter", title: "Editor: Toggle Typewriter Scrolling", run: () => updateSettings({ typewriterMode: !workbench.settings.typewriterMode }) },
+    { id: "editor.toggleFocus", title: "Editor: Toggle Focus Mode", run: () => updateSettings({ focusMode: !workbench.settings.focusMode }) },
     { id: "editor.modeCode", title: "Editor: Source Mode", run: () => updateSettings({ editorMode: "code" }) },
     { id: "editor.modePreview", title: "Editor: Preview Mode", run: () => updateSettings({ editorMode: "preview" }) },
     { id: "editor.modeLive", title: "Editor: Live Preview Mode", run: () => updateSettings({ editorMode: "live" }) },
