@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store";
+import { createSignal } from "solid-js";
 
 export type PanelId = "left" | "right" | "bottom" | "center";
 export type ViewId = "binder" | "codex" | "agent" | "editor" | "outliner" | "search" | "terminal";
@@ -20,10 +21,24 @@ export interface PanelState {
 
 export type EditorMode = "code" | "preview" | "live";
 
+export type ThemeId = "system" | "dark" | "midnight" | "light" | "sepia";
+export type ResolvedTheme = Exclude<ThemeId, "system">;
+
+export const THEMES: { id: ThemeId; label: string }[] = [
+  { id: "system", label: "System" },
+  { id: "dark", label: "Dark" },
+  { id: "midnight", label: "Midnight" },
+  { id: "light", label: "Light" },
+  { id: "sepia", label: "Sepia" },
+];
+
+export const isLightTheme = (t: ResolvedTheme) => t === "light" || t === "sepia";
+
 export interface EditorSettings {
   fontFamily: string;
   fontSize: number;
   editorMode: EditorMode;
+  theme: ThemeId;
 }
 
 export interface WorkbenchState {
@@ -37,6 +52,7 @@ const DEFAULT_SETTINGS: EditorSettings = {
   fontFamily: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif",
   fontSize: 16,
   editorMode: "live",
+  theme: "dark",
 };
 
 const SETTINGS_KEY = "chronicler-settings";
@@ -93,7 +109,32 @@ export const updateSettings = (patch: Partial<EditorSettings>) => {
   } catch {
     // Persistence is best-effort; the in-memory value still applies
   }
+  if (patch.theme !== undefined) applyTheme();
 };
+
+// ---- Theme application ----
+
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+const resolveTheme = (): ResolvedTheme => {
+  const t = workbench.settings.theme;
+  if (t === "system") return systemDark.matches ? "dark" : "light";
+  return t;
+};
+
+export const [resolvedTheme, setResolvedTheme] = createSignal<ResolvedTheme>("dark");
+
+export function applyTheme() {
+  const resolved = resolveTheme();
+  document.documentElement.dataset.theme = resolved;
+  setResolvedTheme(resolved);
+}
+
+systemDark.addEventListener("change", () => {
+  if (workbench.settings.theme === "system") applyTheme();
+});
+
+applyTheme();
 
 export const togglePanel = (panel: PanelId) => {
   setWorkbench("panels", panel, "visible", (v) => !v);

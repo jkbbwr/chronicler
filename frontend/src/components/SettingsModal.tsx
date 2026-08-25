@@ -1,5 +1,5 @@
-import { type Component, Show, createSignal } from "solid-js";
-import { workbench, setWorkbench, updateSettings } from "../stores/workbench";
+import { type Component, For, Show, createSignal } from "solid-js";
+import { workbench, setWorkbench, updateSettings, THEMES } from "../stores/workbench";
 import { X, Palette, TextCursor, Bot } from "lucide-solid";
 
 export const SettingsModal: Component = () => {
@@ -96,7 +96,31 @@ export const SettingsModal: Component = () => {
 
               <Show when={activeTab() === "appearance"}>
                 <h2 style={{ "font-size": "18px", color: "var(--text-main)", "margin-bottom": "20px", "font-weight": 500 }}>Appearance</h2>
-                <div style={{ "font-size": "13px", color: "var(--text-faint)" }}>Theme selection coming soon.</div>
+
+                <div style={{ "margin-bottom": "25px" }}>
+                  <label style={{ display: "block", "margin-bottom": "8px", "font-size": "13px", color: "var(--text-muted)" }}>Theme</label>
+                  <div style={{ display: "flex", gap: "8px", "flex-wrap": "wrap" }}>
+                    <For each={THEMES}>
+                      {(theme) => (
+                        <button
+                          onClick={() => updateSettings({ theme: theme.id })}
+                          style={{
+                            padding: "8px 16px",
+                            background: workbench.settings.theme === theme.id ? "var(--active-bg)" : "var(--bg-color)",
+                            border: workbench.settings.theme === theme.id ? "1px solid var(--accent)" : "1px solid var(--border-color)",
+                            color: "var(--text-main)",
+                            "border-radius": "6px",
+                            "font-size": "13px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {theme.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                  <div style={{ "font-size": "11px", color: "var(--text-faint)", "margin-top": "6px" }}>System follows your OS light/dark preference.</div>
+                </div>
               </Show>
             </div>
           </div>

@@ -5,8 +5,18 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { workbench } from "../../stores/workbench";
+import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
+
+// Chrome for light themes; dark themes use oneDark
+const cmLight = [
+  CodeMirrorView.theme({}, { dark: false }),
+  syntaxHighlighting(defaultHighlightStyle),
+];
+
+const cmThemeFor = (theme: ReturnType<typeof resolvedTheme>) =>
+  isLightTheme(theme) ? cmLight : oneDark;
 
 /** Handle for out-of-band editor operations (external reloads, search jumps). */
 export interface EditorApi {
@@ -32,6 +42,7 @@ export const EditorView: Component<EditorProps> = (props) => {
 
   const themeCompartment = new Compartment();
   const modeCompartment = new Compartment();
+  const colorCompartment = new Compartment();
 
   const proseTheme = (fontFamily: string, fontSize: number) => CodeMirrorView.theme({
     "&": {
@@ -86,7 +97,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         saveKeymap,
         search({ top: true }),
         markdown({ base: markdownLanguage }),
-        oneDark,
+        colorCompartment.of(cmThemeFor(resolvedTheme())),
         themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
         modeCompartment.of(workbench.settings.editorMode === "live" ? livePreview() : []),
         CodeMirrorView.lineWrapping,
@@ -129,6 +140,10 @@ export const EditorView: Component<EditorProps> = (props) => {
     createEffect(() => {
       const ext = workbench.settings.editorMode === "live" ? livePreview() : [];
       view.dispatch({ effects: modeCompartment.reconfigure(ext) });
+    });
+
+    createEffect(() => {
+      view.dispatch({ effects: colorCompartment.reconfigure(cmThemeFor(resolvedTheme())) });
     });
 
     onCleanup(() => {
