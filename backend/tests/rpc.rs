@@ -236,3 +236,61 @@ fn snapshots_roundtrip() {
     b.shutdown();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn scene_meta_and_index_rebuild() {
+    let dir = temp_dir("meta");
+    let mut b = Backend::spawn(&dir);
+
+    b.call("document/save", serde_json::json!({ "rel_path": "ch1.md", "content": "Mira walked. Mira waited." }));
+    b.call("meta/set", serde_json::json!({ "file": "ch1.md", "synopsis": "Mira arrives", "status": "draft" }));
+    b.call("codex/create", serde_json::json!({ "name": "Mira", "kind": "character" }));
+    b.call("codex/reindex", Value::Null);
+
+    let meta = b.call("meta/get_all", Value::Null);
+    let rows = meta["result"]["meta"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["synopsis"], "Mira arrives");
+    assert_eq!(rows[0]["status"], "draft");
+
+    // Renaming a scene carries its metadata along
+    b.call("project/rename", serde_json::json!({ "old_path": "ch1.md", "new_path": "ch2.md" }));
+    let meta = b.call("meta/get_all", Value::Null);
+    assert_eq!(meta["result"]["meta"][0]["file"], "ch2.md");
+
+    // Rebuild clears and reconstructs derived indexes
+    let rebuilt = b.call("index/rebuild", Value::Null);
+    assert!(rebuilt["result"]["mentions"].as_u64().unwrap() >= 1);
+    let list = b.call("codex/list", Value::Null);
+    let id = list["result"]["entities"][0]["id"].as_i64().unwrap();
+    let mentions = b.call("codex/mentions", serde_json::json!({ "id": id }));
+    assert!(mentions["result"]["mentions"].as_array().unwrap().len() >= 1);
+
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn diag_fix_replaces_span() {
+    let dir = temp_dir("fix");
+    let mut b = Backend::spawn(&dir);
+
+    b.call("document/save", serde_json::json!({ "rel_path": "ch1.md", "content": "She recieved a letter.\nMore prose here." }));
+    let ok = b.call("diag/fix", serde_json::json!({
+        "rel_path": "ch1.md", "line": 1, "colStart": 4, "colEnd": 12,
+        "text": "recieved", "replacement": "received"
+    }));
+    assert_eq!(ok["result"]["success"], true);
+    let read = b.call("document/read", serde_json::json!({ "rel_path": "ch1.md" }));
+    assert_eq!(read["result"]["content"], "She received a letter.\nMore prose here.");
+
+    // Stale positions are refused rather than corrupting text
+    let stale = b.call("diag/fix", serde_json::json!({
+        "rel_path": "ch1.md", "line": 1, "colStart": 4, "colEnd": 12,
+        "text": "recieved", "replacement": "received"
+    }));
+    assert!(stale["error"]["message"].as_str().unwrap().contains("changed"));
+
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -151,6 +151,39 @@ const App: Component = () => {
     recheckDiags();
   };
 
+  const fixDiag = async (d: Diag, replacement: string) => {
+    const api = editorApis.get(d.file);
+    if (api) {
+      // Open tab: apply in-editor so dirty state and undo history stay sane
+      if (!api.replaceRange(d.line, d.colStart, d.colEnd, d.text, replacement)) {
+        setStatus("The text changed since this problem was found — rechecking");
+        recheckDiags(d.file);
+        return;
+      }
+    } else {
+      try {
+        await window.chronicler.invoke("diag/fix", {
+          rel_path: d.file, line: d.line, colStart: d.colStart, colEnd: d.colEnd,
+          text: d.text, replacement,
+        });
+      } catch (err: any) {
+        setStatus(`Fix failed: ${err.message}`);
+        recheckDiags(d.file);
+        return;
+      }
+    }
+    // Optimistic update: drop the fixed diag now and shift same-line
+    // neighbours by the length delta so follow-up fixes stay aligned.
+    // (Field matching, not identity — store setters see raw objects.)
+    const delta = [...replacement].length - (d.colEnd - d.colStart);
+    setDiagMap(d.file, (list) => (list ?? [])
+      .filter(x => !(x.line === d.line && x.colStart === d.colStart && x.ruleId === d.ruleId))
+      .map(x => x.line === d.line && x.colStart >= d.colEnd
+        ? { ...x, colStart: x.colStart + delta, colEnd: x.colEnd + delta }
+        : x));
+    setStatus(`Fixed “${d.text}” → “${replacement}”`);
+  };
+
   const ignoreDiag = async (d: Diag, global: boolean) => {
     await window.chronicler.invoke("diag/ignore", {
       ruleId: d.ruleId,
@@ -241,6 +274,7 @@ const App: Component = () => {
       } else if (event.method === "project/changed") {
         handleExternalChanges(event.params?.paths ?? []);
         fetchStatsDebounced();
+        pruneDeadDiags();
       } else if (event.method === "diag/updated") {
         for (const [file, diags] of Object.entries(event.params?.files ?? {})) {
           setDiagMap(file, diags as Diag[]);
@@ -258,6 +292,18 @@ const App: Component = () => {
 
     await initProject();
   });
+
+  // Deleted files never get a diag/updated push, so their problems would
+  // linger in the panel until a full recheck.
+  const pruneDeadDiags = async () => {
+    try {
+      const res = await window.chronicler.invoke("project/list_files");
+      const live = new Set((res.files ?? []).map((f: any) => f.name));
+      for (const key of Object.keys(diagMap)) {
+        if (!live.has(key)) setDiagMap(key, undefined as any);
+      }
+    } catch { /* backend restarting */ }
+  };
 
   const initProject = async () => {
     try {
@@ -693,6 +739,20 @@ const App: Component = () => {
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
+    {
+      id: "index.rebuild", title: "Codex: Invalidate & Rebuild Index",
+      run: async () => {
+        setStatus("Rebuilding index from scratch...");
+        try {
+          const res = await window.chronicler.invoke("index/rebuild");
+          setCodexVersion(v => v + 1);
+          recheckDiags();
+          setStatus(`Index rebuilt: ${res.mentions} mentions, ${res.candidates} candidates across ${res.files} files`);
+        } catch (err: any) {
+          setStatus(`Index rebuild failed: ${err.message}`);
+        }
+      },
+    },
     { id: "stats.open", title: "Writing: Statistics & Targets", run: () => { fetchStats(); setStatsOpen(true); } },
     {
       id: "codex.promoteSelection", title: "Codex: Promote Selection", keybinding: "Mod+Shift+K",
@@ -988,6 +1048,7 @@ const App: Component = () => {
                 logs={logs()}
                 onJump={jumpToDiag}
                 onAddWord={addWordFromDiag}
+                onFix={fixDiag}
                 onIgnore={ignoreDiag}
                 onRecheck={() => recheckDiags()}
                 onStatus={setStatus}

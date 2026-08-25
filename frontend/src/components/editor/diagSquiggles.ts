@@ -11,8 +11,8 @@ import {
 // grammar (assistant reserved for later).
 
 export interface Diag {
-  source: "spelling" | "grammar" | "assistant";
-  severity: "error" | "warning";
+  source: "spelling" | "grammar" | "style" | "assistant";
+  severity: "error" | "warning" | "info";
   file: string;
   line: number; // 1-based
   colStart: number;
@@ -30,6 +30,10 @@ const squiggleTheme = EditorView.baseTheme({
   },
   ".cm-diag-grammar": {
     textDecoration: "underline wavy #61afef 1px",
+    textDecorationSkipInk: "none",
+  },
+  ".cm-diag-style": {
+    textDecoration: "underline dotted #e5c07b 1.5px",
     textDecorationSkipInk: "none",
   },
   ".cm-diag-assistant": {

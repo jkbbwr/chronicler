@@ -16,6 +16,7 @@ interface ProblemsPanelProps {
   logs: LogEntry[];
   onJump: (d: Diag) => void;
   onAddWord: (d: Diag) => void;
+  onFix: (d: Diag, replacement: string) => void;
   onIgnore: (d: Diag, global: boolean) => void;
   onRecheck: () => void;
   onStatus: (m: string) => void;
@@ -24,6 +25,7 @@ interface ProblemsPanelProps {
 const GROUPS: { source: Diag["source"]; label: string; color: string }[] = [
   { source: "spelling", label: "Spelling", color: "#e06c75" },
   { source: "grammar", label: "Grammar", color: "#61afef" },
+  { source: "style", label: "Style", color: "#e5c07b" },
   { source: "assistant", label: "Assistant", color: "#b689e0" },
 ];
 
@@ -114,11 +116,25 @@ export const ProblemsPanel: Component<ProblemsPanelProps> = (props) => {
                       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
                     >
-                      <span style={{ color: "var(--text-main)", "flex-shrink": 0, "font-weight": 600 }}>{d.text}</span>
+                      <span style={{ color: "var(--text-main)", "flex-shrink": 0, "font-weight": 600, "max-width": "260px", overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis" }}>{d.text}</span>
                       <span style={{ color: "var(--text-muted)", overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis", flex: 1 }}>
                         {d.message}
                         <Show when={d.replacements?.length}>
-                          <span style={{ color: "var(--text-faint)" }}> — try {d.replacements!.slice(0, 3).join(", ")}</span>
+                          <span style={{ color: "var(--text-faint)" }}> — try </span>
+                          <For each={d.replacements!.slice(0, 3)}>
+                            {(rep, i) => (
+                              <>
+                                {i() > 0 && <span style={{ color: "var(--text-faint)" }}>, </span>}
+                                <span
+                                  onClick={(e) => { e.stopPropagation(); props.onFix(d, rep); }}
+                                  style={{ color: "var(--accent)", cursor: "pointer", "text-decoration": "underline dotted" }}
+                                  title={`Replace with “${rep}”`}
+                                >
+                                  {rep}
+                                </span>
+                              </>
+                            )}
+                          </For>
                         </Show>
                       </span>
                       <span style={{ color: "var(--text-faint)", "flex-shrink": 0, "font-size": "11px", "text-align": "right" }}>
@@ -126,6 +142,15 @@ export const ProblemsPanel: Component<ProblemsPanelProps> = (props) => {
                       </span>
                       {/* Fixed-width action column keeps buttons aligned across rows */}
                       <div style={{ display: "flex", gap: "6px", "justify-content": "flex-end", width: "185px", "flex-shrink": 0 }}>
+                        <Show when={d.replacements?.length}>
+                          <button
+                            style={{ ...smallBtn, color: "var(--accent)", "border-color": "var(--accent)" }}
+                            onClick={(e) => { e.stopPropagation(); props.onFix(d, d.replacements![0]); }}
+                            title={`Replace with “${d.replacements![0]}”`}
+                          >
+                            Fix
+                          </button>
+                        </Show>
                         <Show when={d.source === "spelling"}>
                           <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onAddWord(d); }} title="Add to project dictionary">
                             + Dictionary
@@ -134,8 +159,8 @@ export const ProblemsPanel: Component<ProblemsPanelProps> = (props) => {
                         <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, false); }} title={d.source === "spelling" ? "Ignore this word in this file" : "Ignore this rule at this text in this file"}>
                           Ignore
                         </button>
-                        <Show when={d.source === "grammar"}>
-                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, true); }} title="Disable this grammar rule everywhere">
+                        <Show when={d.source === "grammar" || d.source === "style"}>
+                          <button style={smallBtn} onClick={(e) => { e.stopPropagation(); props.onIgnore(d, true); }} title="Disable this rule everywhere">
                             Disable rule
                           </button>
                         </Show>

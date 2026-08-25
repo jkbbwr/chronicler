@@ -34,6 +34,11 @@ export interface EditorApi {
   getCursorLine(): number;
   /** Select a span on a 1-based line (char columns) and scroll to it. */
   revealSpan(line: number, colStart: number, colEnd: number): void;
+  /**
+   * Replace a span on a 1-based line if it still holds `expected`.
+   * Returns false when the text has drifted (stale diagnostic).
+   */
+  replaceRange(line: number, colStart: number, colEnd: number, expected: string, replacement: string): boolean;
 }
 
 interface EditorProps {
@@ -173,6 +178,15 @@ export const EditorView: Component<EditorProps> = (props) => {
           effects: CodeMirrorView.scrollIntoView(from, { y: "center" }),
         });
         view.focus();
+      },
+      replaceRange: (line: number, colStart: number, colEnd: number, expected: string, replacement: string) => {
+        if (line < 1 || line > view.state.doc.lines) return false;
+        const l = view.state.doc.line(line);
+        const from = l.from + colStart;
+        const to = l.from + colEnd;
+        if (to > l.to || view.state.sliceDoc(from, to) !== expected) return false;
+        view.dispatch({ changes: { from, to, insert: replacement } });
+        return true;
       },
     });
 

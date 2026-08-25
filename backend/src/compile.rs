@@ -170,8 +170,33 @@ fn is_hr(line: &str) -> bool {
         && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*') || t.chars().all(|c| c == '_'))
 }
 
+/// Remove `<!-- ... -->` annotations (including multi-line ones) — writer
+/// notes never belong in compiled output.
+pub fn strip_html_comments(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut rest = md;
+    loop {
+        match rest.find("<!--") {
+            None => {
+                out.push_str(rest);
+                break;
+            }
+            Some(start) => {
+                out.push_str(&rest[..start]);
+                match rest[start..].find("-->") {
+                    Some(end) => rest = &rest[start + end + 3..],
+                    None => break, // unterminated comment swallows the rest
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Convert a scene's markdown body to Typst markup.
-pub fn md_to_typst(md: &str) -> String {
+pub fn md_to_typst(raw: &str) -> String {
+    let md = strip_html_comments(raw);
+    let md = md.as_str();
     let mut out: Vec<String> = Vec::new();
     let mut in_fence = false;
     let mut quote: Vec<String> = Vec::new();
@@ -424,7 +449,8 @@ pub fn generate_markdown(chapters: &[(String, Vec<String>)], s: &CompileSettings
             (false, _) => title.trim().to_string(),
         };
         doc.push_str(&format!("\n# {}\n\n", heading));
-        doc.push_str(&scenes.join(&format!("\n\n{}\n\n", s.scene_separator)));
+        let cleaned: Vec<String> = scenes.iter().map(|sc| strip_html_comments(sc)).collect();
+        doc.push_str(&cleaned.join(&format!("\n\n{}\n\n", s.scene_separator)));
         doc.push('\n');
     }
     doc
@@ -487,6 +513,16 @@ mod tests {
         assert_eq!(convert_inline("cost: $5 #tag"), "cost: \\$5 \\#tag");
         // Bold containing markup-significant chars
         assert_eq!(convert_inline("**a#b**"), "*a\\#b*");
+    }
+
+    #[test]
+    fn comments_never_compile() {
+        let t = md_to_typst("before <!-- note to self --> after\n\n<!-- block\nspanning\n-->\nvisible");
+        assert!(!t.contains("note to self"));
+        assert!(!t.contains("spanning"));
+        assert!(t.contains("before"));
+        assert!(t.contains("after"));
+        assert!(t.contains("visible"));
     }
 
     #[test]

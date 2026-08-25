@@ -21,3 +21,15 @@ reqwest = { version = "0.13.4", features = ["json"] }
 spellbook = "0.4.2"
 nlprule = "0.6.4"
 flate2 = "1.1.9"
+harper-core = "2.8.0"
+
+# harper's curated dictionary decode is unbearably slow unoptimized; keep
+# these crates optimized even in dev builds so engine warm-up stays fast.
+[profile.dev.package.harper-core]
+opt-level = 3
+
+[profile.dev.package.harper-brill]
+opt-level = 3
+
+[profile.dev.package.fst]
+opt-level = 3

@@ -207,6 +207,16 @@ async fn main() -> anyhow::Result<()> {
     let root: Arc<PathBuf> = Arc::new(std::env::current_dir()?.canonicalize()?);
     info!("Chronicler backend started. Project root: {}", root.display());
 
+    // Warm the diagnostics engines off the hot path — harper/nlprule take a
+    // moment to load, and the first check shouldn't pay for it.
+    if diagnostics::is_ready() {
+        tokio::task::spawn_blocking(|| {
+            if let Err(e) = diagnostics::warm() {
+                tracing::warn!("diagnostics warm-up failed: {:#}", e);
+            }
+        });
+    }
+
     // Channel to send responses back to stdout
     let (tx_out, mut rx_out) = mpsc::channel::<String>(100);
 
@@ -430,6 +440,7 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "codex/promote" => codex_promote(root, &req.params).map_err(rpc_err),
         "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
         "codex/reindex" => codex_reindex(root).map_err(rpc_err),
+        "index/rebuild" => index_rebuild(root).map_err(rpc_err),
         "codex/scan" => codex_scan(root, &req.params).map_err(rpc_err),
         "stats/get" => (|| -> AnyResult<Value> {
             let today = param(&req.params, "today")?;
@@ -441,6 +452,7 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
             Err(e) => Err(rpc_err(e)),
         },
         "diag/check" => diag_check(root, &req.params).map_err(rpc_err),
+        "diag/fix" => diag_fix(root, &req.params).map_err(rpc_err),
         "diag/add_word" => (|| -> AnyResult<Value> {
             diagnostics::add_word(root, param(&req.params, "word")?)?;
             Ok(json!({ "success": true }))
@@ -500,6 +512,8 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "project/list_files" => Ok(project_list_files(root)),
         "project/create_folder" => project_create_folder(root, &req.params).map_err(rpc_err),
         "project/rename" => project_rename(root, &req.params).map_err(rpc_err),
+        "meta/get_all" => meta_get_all(root).map_err(rpc_err),
+        "meta/set" => meta_set(root, &req.params).map_err(rpc_err),
         "project/delete" => project_delete(root, &req.params).map_err(rpc_err),
         _ => Err((-32601, format!("Method not found: {}", req.method))),
     };
@@ -628,6 +642,24 @@ fn codex_reindex(root: &Path) -> AnyResult<Value> {
     Ok(json!({ "mentions": count }))
 }
 
+/// Nuke every derived index (mentions, discovery candidates) and rebuild from
+/// the files on disk. User data — entities, dismissals, dictionary,
+/// suppressions, scene metadata — is untouched.
+fn index_rebuild(root: &Path) -> AnyResult<Value> {
+    let conn = db::open(root)?;
+    conn.execute("DELETE FROM mentions", [])?;
+    conn.execute("DELETE FROM candidates", [])?;
+    drop(conn);
+    let mentions = codex::reindex_mentions(root, None)?;
+    let files = list_md_files(root);
+    let candidates = if ner::is_ready() {
+        discover_files(root, &files)?
+    } else {
+        0
+    };
+    Ok(json!({ "mentions": mentions, "candidates": candidates, "files": files.len() }))
+}
+
 fn codex_scan(root: &Path, params: &Value) -> AnyResult<Value> {
     if !ner::is_ready() {
         anyhow::bail!("NER model not downloaded yet — fetch it from the Codex panel first");
@@ -638,6 +670,36 @@ fn codex_scan(root: &Path, params: &Value) -> AnyResult<Value> {
     };
     let new = discover_files(root, &files)?;
     Ok(json!({ "newCandidates": new, "scanned": files.len() }))
+}
+
+/// Apply a single diagnostic fix on disk: replace the exact span if the text
+/// there still matches what the diagnostic saw. Used for files that aren't
+/// open in an editor tab (open tabs apply fixes in-editor instead).
+fn diag_fix(root: &Path, params: &Value) -> AnyResult<Value> {
+    let rel = param(params, "rel_path")?;
+    let expect = param(params, "text")?;
+    let replacement = param(params, "replacement")?;
+    let line_no = params["line"].as_u64().context("missing line")? as usize; // 1-based
+    let col_start = params["colStart"].as_u64().context("missing colStart")? as usize;
+    let col_end = params["colEnd"].as_u64().context("missing colEnd")? as usize;
+    let path = resolve_path(root, rel)?;
+    let content = std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?;
+    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
+    let line = lines
+        .get(line_no.saturating_sub(1))
+        .with_context(|| format!("line {} out of range", line_no))?;
+    let chars: Vec<char> = line.chars().collect();
+    if col_end > chars.len() || chars[col_start..col_end].iter().collect::<String>() != expect {
+        anyhow::bail!("the text has changed since this problem was found — recheck first");
+    }
+    let new_line: String = chars[..col_start]
+        .iter()
+        .collect::<String>()
+        + replacement
+        + &chars[col_end..].iter().collect::<String>();
+    lines[line_no - 1] = new_line;
+    atomic_write(&path, &lines.join("\n"))?;
+    Ok(json!({ "success": true }))
 }
 
 fn compile_run(root: &Path, params: &Value) -> AnyResult<Value> {
@@ -879,6 +941,50 @@ fn project_rename(root: &Path, params: &Value) -> AnyResult<Value> {
     let new = resolve_path(root, new_path)?;
     std::fs::rename(&old, &new)
         .with_context(|| format!("renaming {} to {}", old_path, new_path))?;
+    // Scene metadata follows the file (and children, for folder renames)
+    if let Ok(conn) = db::open(root) {
+        let _ = conn.execute(
+            "UPDATE scene_meta SET file = ?2 WHERE file = ?1",
+            rusqlite::params![old_path, new_path],
+        );
+        let prefix = format!("{}/", old_path);
+        let _ = conn.execute(
+            "UPDATE scene_meta SET file = ?2 || substr(file, ?3) WHERE file LIKE ?1 || '/%'",
+            rusqlite::params![old_path, new_path, prefix.len()],
+        );
+    }
+    Ok(json!({ "success": true }))
+}
+
+fn meta_get_all(root: &Path) -> AnyResult<Value> {
+    let conn = db::open(root)?;
+    let mut stmt = conn.prepare("SELECT file, synopsis, status FROM scene_meta")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "file": r.get::<_, String>(0)?,
+                "synopsis": r.get::<_, String>(1)?,
+                "status": r.get::<_, String>(2)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(json!({ "meta": rows }))
+}
+
+fn meta_set(root: &Path, params: &Value) -> AnyResult<Value> {
+    let file = param(params, "file")?;
+    let conn = db::open(root)?;
+    conn.execute(
+        "INSERT INTO scene_meta (file, synopsis, status) VALUES (?1, '', '')
+         ON CONFLICT(file) DO NOTHING",
+        [file],
+    )?;
+    if let Some(synopsis) = params["synopsis"].as_str() {
+        conn.execute("UPDATE scene_meta SET synopsis = ?2 WHERE file = ?1", rusqlite::params![file, synopsis])?;
+    }
+    if let Some(status) = params["status"].as_str() {
+        conn.execute("UPDATE scene_meta SET status = ?2 WHERE file = ?1", rusqlite::params![file, status])?;
+    }
     Ok(json!({ "success": true }))
 }
 

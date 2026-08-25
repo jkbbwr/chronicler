@@ -1,4 +1,4 @@
-use crate::{codex, db};
+use crate::db;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -73,11 +73,13 @@ struct Engines {
     dict: spellbook::Dictionary,
     tokenizer: nlprule::Tokenizer,
     rules: nlprule::Rules,
+    harper: harper_core::linting::LintGroup,
+    harper_dict: std::sync::Arc<harper_core::spell::FstDictionary>,
 }
 
 static ENGINES: OnceLock<Mutex<Option<Engines>>> = OnceLock::new();
 
-fn with_engines<T>(f: impl FnOnce(&Engines) -> Result<T>) -> Result<T> {
+fn with_engines<T>(f: impl FnOnce(&mut Engines) -> Result<T>) -> Result<T> {
     if !is_ready() {
         bail!("Language models not downloaded");
     }
@@ -93,9 +95,19 @@ fn with_engines<T>(f: impl FnOnce(&Engines) -> Result<T>) -> Result<T> {
             .map_err(|e| anyhow::anyhow!("loading grammar tokenizer: {}", e))?;
         let rules = nlprule::Rules::new(dir.join("en_rules.bin"))
             .map_err(|e| anyhow::anyhow!("loading grammar rules: {}", e))?;
-        *guard = Some(Engines { dict, tokenizer, rules });
+        let harper_dict = harper_core::spell::FstDictionary::curated();
+        let harper = harper_core::linting::LintGroup::new_curated(
+            harper_dict.clone(),
+            harper_core::Dialect::American,
+        );
+        *guard = Some(Engines { dict, tokenizer, rules, harper, harper_dict });
     }
-    f(guard.as_ref().unwrap())
+    f(guard.as_mut().unwrap())
+}
+
+/// Load all engines now (idempotent) so the first real check is fast.
+pub fn warm() -> Result<()> {
+    with_engines(|_| Ok(()))
 }
 
 // ---------- Project dictionary & suppressions (db) ----------
@@ -163,16 +175,25 @@ fn suppressions(root: &Path) -> BTreeSet<(String, String, String)> {
     set
 }
 
+// ---------- Style (crutch words & repetition) ----------
+
+const DEFAULT_FILTER_WORDS: &[&str] = &[
+    "just", "really", "very", "suddenly", "somehow", "actually", "quite",
+    "rather", "simply", "basically", "definitely", "totally",
+];
+
+fn filter_words(root: &Path) -> Vec<String> {
+    db::get_setting(root, "styleWords")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_else(|| DEFAULT_FILTER_WORDS.iter().map(|s| s.to_string()).collect())
+}
+
 // ---------- Checking ----------
 
 fn is_word_char(c: char) -> bool {
     c.is_alphabetic() || c == '\'' || c == '\u{2019}'
-}
-
-/// Should this line be spell/grammar checked at all?
-fn checkable_line(line: &str) -> bool {
-    let t = line.trim_start();
-    !(t.starts_with("```") || t.starts_with("~~~"))
 }
 
 fn strip_word(w: &str) -> &str {
@@ -213,22 +234,29 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
     let content = std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?;
     let custom = custom_words(root);
     let suppressed = suppressions(root);
+    let filters = filter_words(root);
 
     with_engines(|engines| {
         let mut diags: Vec<Value> = Vec::new();
         let mut in_fence = false;
         let mut in_comment = false;
+        // Masked copy of the whole document (code/comments blanked, char
+        // counts preserved) — fed to harper for the style pass at the end.
+        let mut doc_lines: Vec<String> = Vec::new();
 
         for (line_no, raw_line) in content.lines().enumerate() {
             let trimmed = raw_line.trim_start();
             if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
                 in_fence = !in_fence;
+                doc_lines.push(" ".repeat(raw_line.chars().count()));
                 continue;
             }
-            if in_fence || !checkable_line(raw_line) {
+            if in_fence {
+                doc_lines.push(" ".repeat(raw_line.chars().count()));
                 continue;
             }
             let masked = mask_html_comments(raw_line, &mut in_comment);
+            doc_lines.push(masked.clone());
             let line = masked.as_str();
             if line.trim().is_empty() {
                 continue;
@@ -271,6 +299,9 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
                 if suppressed.contains(&("spelling".into(), rel.into(), word.to_string())) {
                     continue;
                 }
+                let mut sugg: Vec<String> = Vec::new();
+                engines.dict.suggest(word, &mut sugg);
+                sugg.truncate(3);
                 diags.push(json!({
                     "source": "spelling",
                     "severity": "error",
@@ -281,7 +312,47 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
                     "text": word,
                     "message": format!("Unknown word “{}”", word),
                     "ruleId": "spelling",
+                    "replacements": sugg,
                 }));
+            }
+
+            // ---- Style: fiction crutch/filter words (config-driven) ----
+            {
+                let mut i = 0;
+                while i < chars.len() {
+                    if !is_word_char(chars[i]) {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    while i < chars.len() && is_word_char(chars[i]) {
+                        i += 1;
+                    }
+                    let raw: String = chars[start..i].iter().collect();
+                    let word = strip_word(&raw).to_lowercase();
+                    if word.len() < 2 {
+                        continue;
+                    }
+
+                    if filters.contains(&word) {
+                        let rule_id = format!("STYLE/FILTER/{}", word.to_uppercase());
+                        if !suppressed.contains(&(rule_id.clone(), rel.into(), word.clone()))
+                            && !suppressed.contains(&(rule_id.clone(), "*".into(), String::new()))
+                        {
+                            diags.push(json!({
+                                "source": "style",
+                                "severity": "info",
+                                "file": rel,
+                                "line": line_no + 1,
+                                "colStart": start,
+                                "colEnd": i,
+                                "text": word,
+                                "message": format!("Filter word “{}” — often cuttable", word),
+                                "ruleId": rule_id,
+                            }));
+                        }
+                    }
+                }
             }
 
             // ---- Grammar: nlprule per line (markdown paragraphs are lines) ----
@@ -318,6 +389,77 @@ pub fn check_file(root: &Path, rel: &str) -> Result<Vec<Value>> {
                     "ruleId": rule_id,
                     "replacements": suggestion.replacements().iter().take(3).collect::<Vec<_>>(),
                 }));
+            }
+        }
+
+        // ---- Style: harper curated lints over the masked document ----
+        // Spelling stays with spellbook (codex-aware) and grammar with
+        // nlprule, so only style-class lint kinds are kept here.
+        {
+            use harper_core::linting::LintKind;
+            let clean = doc_lines.join("\n");
+            let clean_chars: Vec<char> = clean.chars().collect();
+            let mut line_starts: Vec<usize> = Vec::with_capacity(doc_lines.len());
+            let mut off = 0usize;
+            for l in &doc_lines {
+                line_starts.push(off);
+                off += l.chars().count() + 1;
+            }
+            let doc = harper_core::Document::new_markdown_default(&clean, &*engines.harper_dict);
+            for (name, lints) in engines.harper.organized_lints(&doc) {
+                for lint in lints {
+                    let styleish = matches!(
+                        lint.lint_kind,
+                        LintKind::Repetition
+                            | LintKind::Redundancy
+                            | LintKind::Enhancement
+                            | LintKind::Readability
+                            | LintKind::Style
+                    );
+                    if !styleish {
+                        continue;
+                    }
+                    let span = lint.span;
+                    if span.start >= clean_chars.len() {
+                        continue;
+                    }
+                    let line_idx = line_starts.partition_point(|&s| s <= span.start) - 1;
+                    let col_start = span.start - line_starts[line_idx];
+                    let col_end = span.end.min(off).saturating_sub(line_starts[line_idx]);
+                    let text: String = clean_chars
+                        [span.start..span.end.min(clean_chars.len())]
+                        .iter()
+                        .collect();
+                    let rule_id = format!("HARPER/{}", name);
+                    if suppressed.contains(&(rule_id.clone(), rel.into(), text.clone()))
+                        || suppressed.contains(&(rule_id.clone(), "*".into(), String::new()))
+                    {
+                        continue;
+                    }
+                    let replacements: Vec<String> = lint
+                        .suggestions
+                        .iter()
+                        .filter_map(|s| match s {
+                            harper_core::linting::Suggestion::ReplaceWith(chars) => {
+                                Some(chars.iter().collect::<String>())
+                            }
+                            _ => None,
+                        })
+                        .take(3)
+                        .collect();
+                    diags.push(json!({
+                        "source": "style",
+                        "severity": "info",
+                        "file": rel,
+                        "line": line_idx + 1,
+                        "colStart": col_start,
+                        "colEnd": col_end,
+                        "text": text,
+                        "message": lint.message,
+                        "ruleId": rule_id,
+                        "replacements": replacements,
+                    }));
+                }
             }
         }
         Ok(diags)

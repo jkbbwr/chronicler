@@ -97,6 +97,16 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 5;",
         )?;
     }
+    if version < 6 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS scene_meta (
+                 file     TEXT PRIMARY KEY,
+                 synopsis TEXT NOT NULL DEFAULT '',
+                 status   TEXT NOT NULL DEFAULT ''
+             );
+             PRAGMA user_version = 6;",
+        )?;
+    }
     Ok(())
 }
 
