@@ -1,8 +1,10 @@
 import { type Component, createSignal, For, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { Send, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
 
-// The rig: Chronicler's writing agent. Chat streams token-by-token; the
+// Chronicler's writing agent panel. Chat streams token-by-token; the
 // model can call tools (RAG search, grep, codex, scene reads) and each call
 // shows up as a chip on the reply. Conversation state lives at module level
 // so switching panel tabs doesn't lose the thread.
@@ -47,6 +49,26 @@ export const handleRigEvent = (method: string, params: any) => {
   onThreadUpdate?.();
 };
 
+/** Render an agent reply: markdown → sanitized HTML, with scene citations
+ * turned into clickable links. Backtick paths ending in .md become links
+ * too, since models reach for those naturally. */
+const renderAgentMd = (src: string): string => {
+  const raw = marked.parse(src, { async: false }) as string;
+  const clean = DOMPurify.sanitize(raw, { ALLOWED_URI_REGEXP: /^(?:https?|scene):/i });
+  const tpl = document.createElement("template");
+  tpl.innerHTML = clean;
+  tpl.content.querySelectorAll("code").forEach((c) => {
+    const t = (c.textContent ?? "").trim();
+    if (/^[^`\n]{1,200}\.md$/.test(t)) {
+      const a = document.createElement("a");
+      a.setAttribute("href", "scene://" + encodeURI(t));
+      a.textContent = t;
+      c.replaceWith(a);
+    }
+  });
+  return tpl.innerHTML;
+};
+
 const TOOL_LABELS: Record<string, string> = {
   search_manuscript: "searching manuscript",
   grep_manuscript: "grepping",
@@ -59,6 +81,8 @@ interface AgentViewProps {
   activeScene: () => { file: string; content: string } | null;
   onStatus: (m: string) => void;
   onOpenSettings: () => void;
+  /** Open a scene the agent cited (1-based line, when given). */
+  onOpenScene: (file: string, line?: number) => void;
 }
 
 export const AgentView: Component<AgentViewProps> = (props) => {
@@ -150,6 +174,19 @@ export const AgentView: Component<AgentViewProps> = (props) => {
     }
   };
 
+  const onMdClick = (e: MouseEvent) => {
+    const a = (e.target as HTMLElement).closest("a");
+    if (!a) return;
+    e.preventDefault();
+    const href = a.getAttribute("href") ?? "";
+    if (href.startsWith("scene://")) {
+      const [path, anchor] = href.slice("scene://".length).split("#");
+      const line = anchor ? parseInt(anchor.replace(/^L/i, ""), 10) : NaN;
+      props.onOpenScene(decodeURI(path), Number.isFinite(line) ? line : undefined);
+    }
+    // http(s) links stay inert: the panel shouldn't navigate the app
+  };
+
   const chip = {
     display: "inline-flex", "align-items": "center", gap: "4px",
     padding: "1px 7px", "border-radius": "9px", "font-size": "10.5px",
@@ -162,7 +199,7 @@ export const AgentView: Component<AgentViewProps> = (props) => {
         <Show when={thread.msgs.length === 0}>
           <div style={{ color: "var(--text-faint)", "line-height": "1.6", padding: "4px" }}>
             <Sparkles size={13} style={{ "vertical-align": "-2px", "margin-right": "5px" }} />
-            The rig can search your novel by meaning, grep it exactly, consult the codex, and read
+            The agent can search your novel by meaning, grep it exactly, consult the codex, and read
             scenes — then talk craft with the receipts in hand. Configure a provider in{" "}
             <span onClick={props.onOpenSettings} style={{ color: "var(--accent)", cursor: "pointer" }}>Settings → AI</span>{" "}
             and index the manuscript below.
@@ -190,7 +227,12 @@ export const AgentView: Component<AgentViewProps> = (props) => {
                   </For>
                 </div>
               </Show>
-              <span style={{ "white-space": "pre-wrap" }}>{m.content}</span>
+              <Show
+                when={m.role === "assistant" && !m.error}
+                fallback={<span style={{ "white-space": "pre-wrap" }}>{m.content}</span>}
+              >
+                <div class="agent-md" innerHTML={renderAgentMd(m.content)} onClick={onMdClick} />
+              </Show>
               <Show when={m.streaming && !m.content}>
                 <span style={{ color: "var(--text-faint)" }}>thinking…</span>
               </Show>
@@ -240,7 +282,7 @@ export const AgentView: Component<AgentViewProps> = (props) => {
           value={draft()}
           onInput={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={onKey}
-          placeholder="Ask the rig… (Enter to send)"
+          placeholder="Ask about your manuscript… (Enter to send)"
           rows={3}
           style={{
             width: "100%", resize: "none", background: "var(--bg-color)",

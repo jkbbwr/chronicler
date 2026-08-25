@@ -1115,6 +1115,10 @@ const App: Component = () => {
                       }}
                       onStatus={setStatus}
                       onOpenSettings={openSettingsTab}
+                      onOpenScene={async (file, line) => {
+                        await openTab(file);
+                        if (line) setTimeout(() => editorApis.get(file)?.revealLine(line), 60);
+                      }}
                     />
                   )}
                 </div>
