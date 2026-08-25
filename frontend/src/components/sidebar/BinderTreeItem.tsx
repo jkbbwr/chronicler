@@ -20,9 +20,12 @@ export interface TreeItemProps {
   onRenameKeyDown: (e: KeyboardEvent & { currentTarget: HTMLInputElement }, oldPath: string) => void;
   onRenameBlur: () => void;
   onDragStart: (e: DragEvent, path: string) => void;
-  onDragOverFolder: (e: DragEvent) => void;
-  onDropOnFolder: (e: DragEvent, path: string) => void;
+  /** `before` is true when dropped on the top half of the row */
+  onDropOnItem: (e: DragEvent, node: TreeNode, before: boolean) => void;
 }
+
+const dropBefore = (e: DragEvent, el: HTMLElement) =>
+  e.clientY - el.getBoundingClientRect().top < el.getBoundingClientRect().height / 2;
 
 export const BinderTreeItem: Component<TreeItemProps> = (props) => {
   const [isOpen, setIsOpen] = createSignal(false);
@@ -43,8 +46,29 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
       <div
         draggable={true}
         onDragStart={(e) => props.onDragStart(e, props.node.path)}
-        onDragOver={props.node.is_dir ? props.onDragOverFolder : undefined}
-        onDrop={props.node.is_dir ? (e) => props.onDropOnFolder(e, props.node.path) : undefined}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const el = e.currentTarget;
+          if (dropBefore(e, el)) {
+            el.style.boxShadow = "inset 0 2px 0 var(--accent)";
+            el.style.backgroundColor = "";
+          } else {
+            el.style.boxShadow = props.node.is_dir ? "" : "inset 0 -2px 0 var(--accent)";
+            el.style.backgroundColor = props.node.is_dir ? "var(--active-bg)" : "";
+          }
+        }}
+        onDragLeave={(e) => {
+          e.currentTarget.style.boxShadow = "";
+          e.currentTarget.style.backgroundColor = "";
+        }}
+        onDrop={(e) => {
+          const el = e.currentTarget;
+          const before = dropBefore(e, el);
+          el.style.boxShadow = "";
+          el.style.backgroundColor = "";
+          props.onDropOnItem(e, props.node, before);
+        }}
         class={`file-item ${props.activeFile === props.node.path && !props.node.is_dir ? "active" : ""}`}
         onClick={handleClick}
         onContextMenu={(e) => {
@@ -110,8 +134,7 @@ export const BinderTreeItem: Component<TreeItemProps> = (props) => {
           onRenameKeyDown={props.onRenameKeyDown}
           onRenameBlur={props.onRenameBlur}
           onDragStart={props.onDragStart}
-          onDragOverFolder={props.onDragOverFolder}
-          onDropOnFolder={props.onDropOnFolder}
+          onDropOnItem={props.onDropOnItem}
         />
       ))}
     </div>

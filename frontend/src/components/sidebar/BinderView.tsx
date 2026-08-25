@@ -21,17 +21,32 @@ interface FileEntry {
   is_dir: boolean;
 }
 
-const fetchFiles = async () => {
+/** Manual ordering: parent dir path ("" for root) -> child basenames in order. */
+type OrderMap = Record<string, string[]>;
+
+const ORDER_FILE = ".chronicler/order.json";
+
+const basename = (p: string) => p.split("/").pop()!;
+const parentOf = (p: string) => p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+
+const fetchBinder = async () => {
   const res = await window.chronicler.invoke("project/list_files");
-  return res.files as FileEntry[];
+  let order: OrderMap = {};
+  try {
+    const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
+    order = JSON.parse(o.content);
+  } catch {
+    // No order file yet — fall back to dirs-first alphabetical
+  }
+  return { files: res.files as FileEntry[], order };
 };
 
 export const BinderView: Component<BinderViewProps> = (props) => {
-  const [files, { refetch }] = createResource(fetchFiles);
-  
+  const [binder, { refetch }] = createResource(fetchBinder);
+
   const [creatingFile, setCreatingFile] = createSignal<string | false>(false);
   const [creatingFolder, setCreatingFolder] = createSignal<string | false>(false);
-  
+
   const [contextMenu, setContextMenu] = createSignal<{ x: number, y: number, name: string, is_dir: boolean } | null>(null);
   const [renamingItem, setRenamingItem] = createSignal<string | null>(null);
 
@@ -51,6 +66,15 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     if (prev !== undefined && v !== prev) refetch();
     return v;
   });
+
+  const saveOrder = async (order: OrderMap) => {
+    try {
+      await window.chronicler.invoke("project/create_folder", { rel_path: ".chronicler" });
+      await window.chronicler.invoke("document/save", { rel_path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
+    } catch {
+      // Ordering is a nicety; never block the move itself on it
+    }
+  };
 
   const handleInputKeyDown = async (e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
     if (e.key === "Enter") {
@@ -122,28 +146,70 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     e.dataTransfer?.setData("text/plain", name);
   };
 
-  const handleDropOnFolder = async (e: DragEvent, folderName: string) => {
+  const findNode = (nodes: TreeNode[], path: string): TreeNode | undefined => {
+    for (const n of nodes) {
+      if (n.path === path) return n;
+      const found = findNode(n.children, path);
+      if (found) return found;
+    }
+    return undefined;
+  };
+
+  /** Persist the sibling order for `parent` with `draggedName` at `index`. */
+  const reorderSiblings = async (parent: string, draggedName: string, targetName: string, after: boolean) => {
+    const data = binder();
+    const tree = buildTree(data?.files || [], data?.order || {});
+    const parentChildren = parent === "" ? tree : (findNode(tree, parent)?.children ?? []);
+    const siblings = parentChildren.map(n => n.name).filter(n => n !== draggedName);
+    let idx = siblings.indexOf(targetName);
+    if (idx === -1) idx = siblings.length;
+    if (after) idx += 1;
+    siblings.splice(idx, 0, draggedName);
+    const order: OrderMap = { ...(data?.order || {}), [parent]: siblings };
+    await saveOrder(order);
+  };
+
+  /**
+   * Drop on the top half of any row: place the dragged item before it
+   * (moving between folders if needed). Drop on the bottom half of a folder:
+   * move into it. Drop on the bottom half of a file: place after it.
+   */
+  const handleDropOnItem = async (e: DragEvent, target: TreeNode, before: boolean) => {
     e.preventDefault();
     e.stopPropagation();
-    const draggedName = e.dataTransfer?.getData("text/plain");
-    if (!draggedName || draggedName === folderName) return;
+    const draggedPath = e.dataTransfer?.getData("text/plain");
+    if (!draggedPath || draggedPath === target.path) return;
+    if (target.path.startsWith(draggedPath + "/")) return; // no dropping into own subtree
 
-    const baseName = draggedName.split("/").pop();
-    const newPath = `${folderName}/${baseName}`;
-    if (newPath !== draggedName && props.onRename) {
-      await props.onRename(draggedName, newPath);
-      refetch();
+    const draggedName = basename(draggedPath);
+
+    if (!before && target.is_dir) {
+      const newPath = `${target.path}/${draggedName}`;
+      if (newPath !== draggedPath && props.onRename) {
+        await props.onRename(draggedPath, newPath);
+        refetch();
+      }
+      return;
     }
+
+    const parent = parentOf(target.path);
+    const newPath = parent ? `${parent}/${draggedName}` : draggedName;
+    if (newPath !== draggedPath) {
+      if (!props.onRename) return;
+      await props.onRename(draggedPath, newPath);
+    }
+    await reorderSiblings(parent, draggedName, target.name, !before && !target.is_dir);
+    refetch();
   };
 
   const handleDropOnRoot = async (e: DragEvent) => {
     e.preventDefault();
-    const draggedName = e.dataTransfer?.getData("text/plain");
-    if (!draggedName || !draggedName.includes("/")) return; // Already at root
+    const draggedPath = e.dataTransfer?.getData("text/plain");
+    if (!draggedPath || !draggedPath.includes("/")) return; // Already at root
 
-    const baseName = draggedName.split("/").pop();
-    if (baseName && baseName !== draggedName && props.onRename) {
-      await props.onRename(draggedName, baseName);
+    const name = basename(draggedPath);
+    if (name && name !== draggedPath && props.onRename) {
+      await props.onRename(draggedPath, name);
       refetch();
     }
   };
@@ -154,10 +220,10 @@ export const BinderView: Component<BinderViewProps> = (props) => {
     setContextMenu({ x: e.clientX, y: e.clientY, name: path, is_dir });
   };
 
-  const buildTree = (list: FileEntry[]) => {
+  const buildTree = (list: FileEntry[], order: OrderMap) => {
     const rootNodes: TreeNode[] = [];
     const map = new Map<string, TreeNode>();
-    
+
     // Sort so parents come before children
     const sorted = [...list].sort((a, b) => a.name.length - b.name.length);
 
@@ -165,16 +231,16 @@ export const BinderView: Component<BinderViewProps> = (props) => {
       const parts = f.name.split("/");
       const name = parts.pop()!;
       const parentPath = parts.join("/");
-      
+
       const node: TreeNode = {
         path: f.name,
         name,
         is_dir: f.is_dir,
         children: []
       };
-      
+
       map.set(f.name, node);
-      
+
       if (parentPath === "") {
         rootNodes.push(node);
       } else {
@@ -187,19 +253,25 @@ export const BinderView: Component<BinderViewProps> = (props) => {
         }
       }
     }
-    
-    const sortNodes = (nodes: TreeNode[]) => {
+
+    const sortLevel = (nodes: TreeNode[], parentPath: string) => {
+      const manual = order[parentPath] ?? [];
       nodes.sort((a, b) => {
+        const ia = manual.indexOf(a.name);
+        const ib = manual.indexOf(b.name);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
         if (a.is_dir && !b.is_dir) return -1;
         if (!a.is_dir && b.is_dir) return 1;
         return a.name.localeCompare(b.name);
       });
       for (const node of nodes) {
-        if (node.is_dir) sortNodes(node.children);
+        if (node.is_dir) sortLevel(node.children, node.path);
       }
     };
-    
-    sortNodes(rootNodes);
+
+    sortLevel(rootNodes, "");
     return rootNodes;
   };
 
@@ -208,15 +280,15 @@ export const BinderView: Component<BinderViewProps> = (props) => {
       <div style={{ padding: "10px 15px", display: "flex", "justify-content": "space-between", "align-items": "center" }}>
         <span style={{ "font-size": "11px", "font-weight": 600, "text-transform": "uppercase", color: "var(--text-muted)", "letter-spacing": "0.5px" }}>Manuscript</span>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button 
-            onClick={() => startCreate("file")} 
+          <button
+            onClick={() => startCreate("file")}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
             title="New File (Cmd+N)"
           >
             <FilePlus size={14} strokeWidth={2} />
           </button>
-          <button 
-            onClick={() => startCreate("folder")} 
+          <button
+            onClick={() => startCreate("folder")}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
             title="New Folder (Cmd+Shift+N)"
           >
@@ -224,16 +296,16 @@ export const BinderView: Component<BinderViewProps> = (props) => {
           </button>
         </div>
       </div>
-      
-      <div 
-        class="file-list" 
+
+      <div
+        class="file-list"
         style={{ "overflow-y": "auto", flex: 1, padding: "5px 0" }}
         onDragOver={handleDragOver}
         onDrop={handleDropOnRoot}
       >
-        {files.loading && <div style={{ padding: "5px 15px", color: "var(--text-muted)", "font-size": "12px" }}>Loading...</div>}
-        
-        {buildTree(files() || []).map(node => (
+        {binder.loading && <div style={{ padding: "5px 15px", color: "var(--text-muted)", "font-size": "12px" }}>Loading...</div>}
+
+        {buildTree(binder()?.files || [], binder()?.order || {}).map(node => (
           <BinderTreeItem
             node={node}
             depth={0}
@@ -244,17 +316,16 @@ export const BinderView: Component<BinderViewProps> = (props) => {
             onRenameKeyDown={handleRenameKeyDown}
             onRenameBlur={() => setRenamingItem(null)}
             onDragStart={handleDragStart}
-            onDragOverFolder={handleDragOver}
-            onDropOnFolder={handleDropOnFolder}
+            onDropOnItem={handleDropOnItem}
           />
         ))}
 
         <Show when={creatingFile() !== false || creatingFolder() !== false}>
           <div style={{ padding: "4px 15px", display: "flex", "align-items": "center", gap: "8px" }}>
             {creatingFile() !== false ? <FileText size={12} color="var(--text-muted)" /> : <FolderPlus size={12} color="var(--text-muted)" />}
-            <input 
+            <input
               id="binder-new-input"
-              type="text" 
+              type="text"
               placeholder={creatingFile() !== false ? `${creatingFile() ? creatingFile() + '/' : ''}Filename...` : `${creatingFolder() ? creatingFolder() + '/' : ''}Folder name...`}
               onKeyDown={handleInputKeyDown}
               onBlur={() => { setCreatingFile(false); setCreatingFolder(false); }}
@@ -274,7 +345,7 @@ export const BinderView: Component<BinderViewProps> = (props) => {
       </div>
 
       {contextMenu() && (
-        <BinderContextMenu 
+        <BinderContextMenu
           x={contextMenu()!.x}
           y={contextMenu()!.y}
           itemName={contextMenu()!.name}
