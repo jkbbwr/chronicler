@@ -88,9 +88,13 @@ export const SettingsView: Component<{ onStatus: (m: string) => void }> = (props
               <input type="checkbox" checked={workbench.settings.typewriterMode} onChange={(e) => updateSettings({ typewriterMode: e.currentTarget.checked })} />
               Typewriter scrolling — keep the cursor line centered
             </label>
-            <label style={{ display: "flex", gap: "8px", "align-items": "center", color: "var(--text-main)", "font-size": "13px", cursor: "pointer" }}>
+            <label style={{ display: "flex", gap: "8px", "align-items": "center", color: "var(--text-main)", "font-size": "13px", "margin-bottom": "8px", cursor: "pointer" }}>
               <input type="checkbox" checked={workbench.settings.focusMode} onChange={(e) => updateSettings({ focusMode: e.currentTarget.checked })} />
               Focus mode — dim everything but the current paragraph
+            </label>
+            <label style={{ display: "flex", gap: "8px", "align-items": "center", color: "var(--text-main)", "font-size": "13px", cursor: "pointer" }}>
+              <input type="checkbox" checked={workbench.settings.smartTypography} onChange={(e) => updateSettings({ smartTypography: e.currentTarget.checked })} />
+              Smart typography — curly quotes, — from --, … from ...
             </label>
           </Row>
         </Section>

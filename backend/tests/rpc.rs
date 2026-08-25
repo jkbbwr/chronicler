@@ -87,6 +87,19 @@ fn documents_and_search() {
     let files = list["result"]["files"].as_array().unwrap();
     assert!(files.iter().any(|f| f["name"] == "a.md"));
 
+    // Project-wide replace (case-insensitive), then a line-scoped one
+    b.call("document/save", serde_json::json!({ "rel_path": "b.md", "content": "The Dragon met a dragon.\nAnother dragon waits." }));
+    let rep = b.call("project/replace", serde_json::json!({ "query": "dragon", "replacement": "wyvern" }));
+    assert_eq!(rep["result"]["occurrences"], 4); // 1 in a.md + 3 in b.md
+    let read = b.call("document/read", serde_json::json!({ "rel_path": "b.md" }));
+    assert_eq!(read["result"]["content"], "The wyvern met a wyvern.\nAnother wyvern waits.");
+
+    b.call("document/save", serde_json::json!({ "rel_path": "c.md", "content": "wyvern one\nwyvern two" }));
+    let rep = b.call("project/replace", serde_json::json!({ "query": "wyvern", "replacement": "drake", "file": "c.md", "line": 2 }));
+    assert_eq!(rep["result"]["occurrences"], 1);
+    let read = b.call("document/read", serde_json::json!({ "rel_path": "c.md" }));
+    assert_eq!(read["result"]["content"], "wyvern one\ndrake two");
+
     b.shutdown();
     std::fs::remove_dir_all(&dir).ok();
 }

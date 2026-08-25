@@ -41,6 +41,7 @@ export interface EditorSettings {
   theme: ThemeId;
   typewriterMode: boolean;
   focusMode: boolean;
+  smartTypography: boolean;
 }
 
 export interface WorkbenchState {
@@ -57,6 +58,7 @@ const DEFAULT_SETTINGS: EditorSettings = {
   theme: "dark",
   typewriterMode: false,
   focusMode: false,
+  smartTypography: true,
 };
 
 const SETTINGS_KEY = "chronicler-settings";

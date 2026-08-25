@@ -494,6 +494,7 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "snapshot/list" => snapshot_list(root).map_err(rpc_err),
         "snapshot/restore_file" => snapshot_restore_file(root, &req.params).map_err(rpc_err),
         "project/search" => project_search(root, &req.params).map_err(rpc_err),
+        "project/replace" => project_replace(root, &req.params).map_err(rpc_err),
         "document/read" => document_read(root, &req.params).map_err(rpc_err),
         "document/save" => document_save(root, &req.params).map_err(rpc_err),
         "project/list_files" => Ok(project_list_files(root)),
@@ -704,9 +705,130 @@ fn snapshot_restore_file(root: &Path, params: &Value) -> AnyResult<Value> {
 
 fn project_search(root: &Path, params: &Value) -> AnyResult<Value> {
     let query = param(params, "query")?;
+    let match_case = params["matchCase"].as_bool().unwrap_or(false);
     let mut results = Vec::new();
-    search_files(root, "", &query.to_lowercase(), &mut results);
+    if match_case {
+        search_files_cased(root, "", query, &mut results, true);
+    } else {
+        search_files(root, "", &query.to_lowercase(), &mut results);
+    }
     Ok(json!({ "results": results }))
+}
+
+/// Replace occurrences of `query`. Scope is the whole project, or one
+/// specific line when `file` + `line` are given. Case-insensitive matching
+/// splices the replacement over the matched span.
+fn project_replace(root: &Path, params: &Value) -> AnyResult<Value> {
+    let query = param(params, "query")?;
+    let replacement = params["replacement"].as_str().unwrap_or("");
+    let match_case = params["matchCase"].as_bool().unwrap_or(false);
+    let only_file = params["file"].as_str();
+    let only_line = params["line"].as_u64().map(|l| l as usize);
+
+    let replace_in_line = |line: &str| -> (String, usize) {
+        let mut out = String::with_capacity(line.len());
+        let mut count = 0;
+        let mut hay = if match_case { line.to_string() } else { line.to_lowercase() };
+        let mut needle = if match_case { query.to_string() } else { query.to_lowercase() };
+        // Lowercasing can change byte lengths for some scripts, which would
+        // corrupt splice offsets — fall back to exact matching there.
+        if hay.len() != line.len() || needle.len() != query.len() {
+            hay = line.to_string();
+            needle = query.to_string();
+        }
+        let mut byte = 0;
+        while byte < line.len() {
+            if let Some(pos) = hay[byte..].find(&needle) {
+                let start = byte + pos;
+                out.push_str(&line[byte..start]);
+                out.push_str(replacement);
+                count += 1;
+                byte = start + needle.len();
+            } else {
+                out.push_str(&line[byte..]);
+                break;
+            }
+        }
+        (out, count)
+    };
+
+    let files: Vec<String> = match only_file {
+        Some(f) => vec![f.to_string()],
+        None => list_md_files(root),
+    };
+
+    let mut files_changed = 0;
+    let mut occurrences = 0;
+    for rel in &files {
+        let path = resolve_path(root, rel)?;
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let had_trailing_newline = content.ends_with('\n');
+        let mut changed = false;
+        let new_lines: Vec<String> = content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                if let Some(target) = only_line {
+                    if i + 1 != target {
+                        return line.to_string();
+                    }
+                }
+                let (replaced, n) = replace_in_line(line);
+                if n > 0 {
+                    occurrences += n;
+                    changed = true;
+                }
+                replaced
+            })
+            .collect();
+        if changed {
+            let mut new_content = new_lines.join("\n");
+            if had_trailing_newline {
+                new_content.push('\n');
+            }
+            atomic_write(&path, &new_content).with_context(|| format!("writing {}", rel))?;
+            files_changed += 1;
+        }
+    }
+    Ok(json!({ "filesChanged": files_changed, "occurrences": occurrences }))
+}
+
+/// Case-sensitive variant of the project search walk.
+fn search_files_cased(dir: &Path, prefix: &str, query: &str, results: &mut Vec<serde_json::Value>, root_level: bool) {
+    let _ = root_level;
+    const MAX_RESULTS: usize = 200;
+    if results.len() >= MAX_RESULTS {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if results.len() >= MAX_RESULTS {
+                return;
+            }
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if file_name.starts_with('.') { continue; }
+            let rel_path = if prefix.is_empty() { file_name.to_string() } else { format!("{}/{}", prefix, file_name) };
+            if path.is_dir() {
+                search_files_cased(&path, &rel_path, query, results, false);
+            } else if path.extension().unwrap_or_default() == "md" {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for (i, line) in content.lines().enumerate() {
+                        if line.contains(query) {
+                            results.push(json!({
+                                "file": rel_path,
+                                "line": i + 1,
+                                "text": line.trim().chars().take(200).collect::<String>(),
+                            }));
+                            if results.len() >= MAX_RESULTS {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn document_read(root: &Path, params: &Value) -> AnyResult<Value> {

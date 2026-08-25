@@ -792,7 +792,7 @@ const App: Component = () => {
                     />
                   )}
                   {workbench.panels.left.activeView === "search" && (
-                    <SearchView onOpenResult={openSearchResult} />
+                    <SearchView onOpenResult={openSearchResult} onStatus={setStatus} />
                   )}
                   {workbench.panels.left.activeView === "history" && (
                     <HistoryView activeFile={activeFile()} onStatus={setStatus} />

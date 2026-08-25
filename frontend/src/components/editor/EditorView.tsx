@@ -9,6 +9,7 @@ import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language"
 import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
 import { typewriterScroll, focusMode } from "./writingModes";
+import { smartTypography } from "./smartTypography";
 import { entityLinks, type EntityRef } from "./entityLinks";
 import { diagSquiggles, type Diag } from "./diagSquiggles";
 
@@ -67,6 +68,7 @@ export const EditorView: Component<EditorProps> = (props) => {
   const writingExtensions = () => [
     ...(workbench.settings.typewriterMode ? [typewriterScroll()] : []),
     ...(workbench.settings.focusMode ? [focusMode()] : []),
+    ...(workbench.settings.smartTypography ? [smartTypography()] : []),
   ];
 
   const proseTheme = (fontFamily: string, fontSize: number) => CodeMirrorView.theme({
