@@ -2,19 +2,32 @@ import { type Component, createEffect, onCleanup, onMount } from "solid-js";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView as CodeMirrorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { search, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { workbench } from "../../stores/workbench";
+
+/** Handle for out-of-band editor operations (external reloads, search jumps). */
+export interface EditorApi {
+  /** Replace the whole document without marking the tab dirty. */
+  setContent(content: string): void;
+  /** Move the cursor to a 1-based line and scroll it into view. */
+  revealLine(line: number): void;
+}
 
 interface EditorProps {
   initialContent: string;
   onSave?: (content: string) => void;
   onChange?: (content: string) => void;
+  onReady?: (api: EditorApi) => void;
 }
 
 export const EditorView: Component<EditorProps> = (props) => {
   let editorRef!: HTMLDivElement;
   let view: CodeMirrorView;
+  // True while we replace the doc programmatically, so the update listener
+  // doesn't report it as a user edit (which would mark the tab dirty).
+  let syncing = false;
 
   const themeCompartment = new Compartment();
 
@@ -58,7 +71,7 @@ export const EditorView: Component<EditorProps> = (props) => {
     ]);
 
     const updateListener = CodeMirrorView.updateListener.of((update) => {
-      if (update.docChanged && props.onChange) {
+      if (update.docChanged && !syncing && props.onChange) {
         props.onChange(update.state.doc.toString());
       }
     });
@@ -67,12 +80,15 @@ export const EditorView: Component<EditorProps> = (props) => {
       doc: props.initialContent,
       extensions: [
         history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
         saveKeymap,
+        search({ top: true }),
         markdown({ base: markdownLanguage }),
         oneDark,
         themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
         CodeMirrorView.lineWrapping,
+        // Native spellcheck needs these on the contenteditable element
+        CodeMirrorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
         updateListener,
       ],
     });
@@ -80,6 +96,25 @@ export const EditorView: Component<EditorProps> = (props) => {
     view = new CodeMirrorView({
       state,
       parent: editorRef,
+    });
+
+    props.onReady?.({
+      setContent: (content: string) => {
+        syncing = true;
+        try {
+          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
+        } finally {
+          syncing = false;
+        }
+      },
+      revealLine: (line: number) => {
+        const l = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines)));
+        view.dispatch({
+          selection: { anchor: l.from },
+          effects: CodeMirrorView.scrollIntoView(l.from, { y: "center" }),
+        });
+        view.focus();
+      },
     });
 
     // Apply settings changes to the live editor
@@ -94,9 +129,9 @@ export const EditorView: Component<EditorProps> = (props) => {
   });
 
   return (
-    <div 
-      ref={editorRef} 
-      style={{ width: "100%", height: "100%", overflow: "hidden" }} 
+    <div
+      ref={editorRef}
+      style={{ width: "100%", height: "100%", overflow: "hidden" }}
     />
   );
 };

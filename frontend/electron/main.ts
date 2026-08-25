@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, MenuItem, dialog } from "electron";
 import path from "node:path";
+import fs from "node:fs";
 import { spawn, ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -19,13 +20,77 @@ const projectIdx = args.indexOf("--project");
 // The most recently opened project; backend restarts (e.g. from the dev
 // watcher) must reuse it rather than falling back to the default cwd.
 let currentProjectPath: string | undefined =
-  projectIdx >= 0 ? args[projectIdx + 1] : process.env.PROJECT_DIR;
+  projectIdx >= 0 ? args[projectIdx + 1] : undefined;
+
+// Expose CDP in dev so tools can attach to the renderer (9222 is often taken by Chrome)
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch("remote-debugging-port", "9223");
+}
 
 function rejectAllPending(reason: string) {
   for (const { reject } of pendingRequests.values()) {
     reject(new Error(reason));
   }
   pendingRequests.clear();
+}
+
+// ---- Recent projects (IntelliJ-style welcome screen state) ----
+
+interface RecentEntry { path: string; openedAt: string }
+interface Recents { last: string | null; projects: RecentEntry[] }
+
+const recentsFile = () => path.join(app.getPath("userData"), "recent-projects.json");
+
+function loadRecents(): Recents {
+  try {
+    return JSON.parse(fs.readFileSync(recentsFile(), "utf8"));
+  } catch {
+    return { last: null, projects: [] };
+  }
+}
+
+function saveRecents(recents: Recents) {
+  try {
+    fs.writeFileSync(recentsFile(), JSON.stringify(recents, null, 2));
+  } catch (err) {
+    console.error("Failed to save recent projects:", err);
+  }
+}
+
+function openProject(projectPath: string) {
+  const recents = loadRecents();
+  recents.projects = [
+    { path: projectPath, openedAt: new Date().toISOString() },
+    ...recents.projects.filter(p => p.path !== projectPath),
+  ].slice(0, 10);
+  recents.last = projectPath;
+  saveRecents(recents);
+
+  startBackend(projectPath);
+  mainWindow?.webContents.send("menu-action", "project-opened");
+}
+
+async function openProjectFlow() {
+  if (!mainWindow) return;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (!result.canceled && result.filePaths.length > 0) {
+    openProject(result.filePaths[0]);
+  }
+}
+
+async function createProjectFlow() {
+  if (!mainWindow) return;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Create Project",
+    buttonLabel: "Create",
+    nameFieldLabel: "Project name",
+  });
+  if (!result.canceled && result.filePath) {
+    fs.mkdirSync(result.filePath, { recursive: true });
+    openProject(result.filePath);
+  }
 }
 
 function setupMenu() {
@@ -47,20 +112,8 @@ function setupMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', click: () => mainWindow?.webContents.send('menu-action', 'new-project') },
-        { 
-          label: 'Open Project...', 
-          click: async () => {
-            const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] });
-            if (!result.canceled && result.filePaths.length > 0) {
-              const newPath = result.filePaths[0];
-              // Restart backend with new CWD
-              startBackend(newPath);
-              mainWindow?.webContents.send('menu-action', 'project-opened');
-            }
-          }, 
-          accelerator: 'CmdOrCtrl+O' 
-        },
+        { label: 'New Project...', click: () => createProjectFlow() },
+        { label: 'Open Project...', click: () => openProjectFlow(), accelerator: 'CmdOrCtrl+O' },
         { type: 'separator' },
         { label: 'New File', click: () => mainWindow?.webContents.send('menu-action', 'new-file'), accelerator: 'CmdOrCtrl+N' },
         { label: 'New Folder', click: () => mainWindow?.webContents.send('menu-action', 'new-folder'), accelerator: 'CmdOrCtrl+Shift+N' },
@@ -175,6 +228,8 @@ function watchRustBackend() {
       ignoreInitial: true,
     });
     watcher.on("all", () => {
+      // Only restart if a project is actually open (not on the welcome screen)
+      if (!currentProjectPath) return;
       startBackend();
       // Optionally notify frontend that backend is recompiling
       mainWindow?.webContents.send("backend-event", { method: "system/recompiling" });
@@ -190,10 +245,39 @@ function createWindow() {
     titleBarStyle: "hiddenInset", // MacOS VS Code style frameless window
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
+      spellcheck: true,
     },
   });
 
   mainWindow.maximize();
+
+  // Spellcheck suggestions on right-click, plus standard edit actions in
+  // editable areas. The app's own HTML context menus call preventDefault,
+  // which suppresses this event, so the two never fight.
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    const menu = new Menu();
+    for (const suggestion of params.dictionarySuggestions) {
+      menu.append(new MenuItem({
+        label: suggestion,
+        click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
+      }));
+    }
+    if (params.misspelledWord) {
+      menu.append(new MenuItem({
+        label: "Add to Dictionary",
+        click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      }));
+      menu.append(new MenuItem({ type: "separator" }));
+    }
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: "cut" }));
+      menu.append(new MenuItem({ role: "copy" }));
+      menu.append(new MenuItem({ role: "paste" }));
+    }
+    if (menu.items.length > 0) {
+      menu.popup();
+    }
+  });
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -205,7 +289,19 @@ function createWindow() {
 
 app.whenReady().then(() => {
   setupMenu();
-  startBackend();
+
+  // Resolve the startup project: explicit flag/env wins, then the last opened
+  // project; with neither, the renderer shows the welcome screen instead.
+  if (currentProjectPath && fs.existsSync(currentProjectPath)) {
+    openProject(currentProjectPath);
+  } else {
+    currentProjectPath = undefined;
+    const recents = loadRecents();
+    if (recents.last && fs.existsSync(recents.last)) {
+      openProject(recents.last);
+    }
+  }
+
   watchRustBackend();
   createWindow();
 
@@ -226,6 +322,28 @@ app.on("before-quit", () => {
   if (rustProcess) {
     rustProcess.kill();
   }
+});
+
+// Welcome screen state and actions
+ipcMain.handle("get-project", () => ({
+  path: currentProjectPath ?? null,
+  recents: loadRecents().projects.filter(p => fs.existsSync(p.path)),
+}));
+
+ipcMain.handle("open-project", async (_event, projectPath?: string) => {
+  if (projectPath) {
+    if (fs.existsSync(projectPath)) openProject(projectPath);
+    return;
+  }
+  await openProjectFlow();
+});
+
+ipcMain.handle("create-project", () => createProjectFlow());
+
+// Native message boxes (three-way save prompts, destructive confirms, errors)
+ipcMain.handle("show-message-box", async (_event, options: Electron.MessageBoxOptions) => {
+  if (!mainWindow) return { response: options.cancelId ?? 0 };
+  return dialog.showMessageBox(mainWindow, options);
 });
 
 // Expose invoke handler for renderer

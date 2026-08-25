@@ -7,6 +7,8 @@ import { onCleanup, onMount } from "solid-js";
 interface BinderViewProps {
   activeFile: string;
   createTrigger?: "file" | "folder" | null;
+  /** Bumped when the backend reports filesystem changes; triggers a refetch. */
+  refreshVersion?: number;
   onFileSelect: (filename: string) => void;
   onNewFile: (name: string) => Promise<void> | void;
   onNewFolder?: (name: string) => Promise<void> | void;
@@ -42,6 +44,12 @@ export const BinderView: Component<BinderViewProps> = (props) => {
   createEffect(() => {
     if (props.createTrigger === "file") startCreate("file", "");
     else if (props.createTrigger === "folder") startCreate("folder", "");
+  });
+
+  createEffect((prev: number | undefined) => {
+    const v = props.refreshVersion;
+    if (prev !== undefined && v !== prev) refetch();
+    return v;
   });
 
   const handleInputKeyDown = async (e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {

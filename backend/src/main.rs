@@ -40,6 +40,49 @@ fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Case-insensitive substring search across all .md files under `dir`.
+fn search_files(dir: &Path, prefix: &str, query_lower: &str, results: &mut Vec<serde_json::Value>) {
+    const MAX_RESULTS: usize = 200;
+    if results.len() >= MAX_RESULTS {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if results.len() >= MAX_RESULTS {
+                return;
+            }
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if file_name.starts_with('.') { continue; }
+
+            let rel_path = if prefix.is_empty() {
+                file_name.to_string()
+            } else {
+                format!("{}/{}", prefix, file_name)
+            };
+
+            if path.is_dir() {
+                search_files(&path, &rel_path, query_lower, results);
+            } else if path.extension().unwrap_or_default() == "md" {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for (i, line) in content.lines().enumerate() {
+                        if line.to_lowercase().contains(query_lower) {
+                            results.push(json!({
+                                "file": rel_path,
+                                "line": i + 1,
+                                "text": line.trim().chars().take(200).collect::<String>(),
+                            }));
+                            if results.len() >= MAX_RESULTS {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn get_files_recursive(dir: &Path, prefix: &str, files: &mut Vec<serde_json::Value>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -85,6 +128,53 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", msg);
         }
     });
+
+    // Watch the project for external changes (git, sync tools, other editors)
+    // and push them to the frontend as JSON-RPC notifications.
+    let (fs_tx, mut fs_rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
+    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if let Ok(event) = res {
+            for p in event.paths {
+                let _ = fs_tx.send(p);
+            }
+        }
+    })?;
+    notify::Watcher::watch(&mut watcher, &root, notify::RecursiveMode::Recursive)?;
+
+    {
+        let tx = tx_out.clone();
+        let root = root.clone();
+        tokio::spawn(async move {
+            use std::time::Duration;
+            while let Some(first) = fs_rx.recv().await {
+                let mut paths = vec![first];
+                // Debounce: batch everything that arrives within 300ms
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+                while let Ok(Some(p)) = tokio::time::timeout_at(deadline, fs_rx.recv()).await {
+                    paths.push(p);
+                }
+                let rels: std::collections::BTreeSet<String> = paths
+                    .iter()
+                    .filter_map(|p| p.strip_prefix(&**root).ok())
+                    .filter(|r| {
+                        r.components().all(|c| {
+                            matches!(c, Component::Normal(n) if !n.to_string_lossy().starts_with('.'))
+                        })
+                    })
+                    .map(|r| r.to_string_lossy().replace('\\', "/"))
+                    .collect();
+                if rels.is_empty() {
+                    continue;
+                }
+                let notif = json!({
+                    "jsonrpc": "2.0",
+                    "method": "project/changed",
+                    "params": { "paths": rels.into_iter().collect::<Vec<_>>() }
+                });
+                let _ = tx.send(notif.to_string()).await;
+            }
+        });
+    }
 
     use tokio::io::AsyncBufReadExt;
     let stdin = tokio::io::stdin();
@@ -135,8 +225,19 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "ping" => Ok(json!("pong")),
         "system/info" => Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "status": "ready"
+            "status": "ready",
+            "root": root.display().to_string()
         })),
+        "project/search" => {
+            let query = req.params["query"].as_str().unwrap_or("");
+            if query.is_empty() {
+                Err((-32602, "Missing query".to_string()))
+            } else {
+                let mut results = Vec::new();
+                search_files(root, "", &query.to_lowercase(), &mut results);
+                Ok(json!({ "results": results }))
+            }
+        },
         "document/read" => {
             let rel_path = req.params["rel_path"].as_str().unwrap_or("");
             if rel_path.is_empty() {
