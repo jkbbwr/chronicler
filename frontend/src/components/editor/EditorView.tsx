@@ -11,6 +11,7 @@ import { livePreview } from "./livePreview";
 import { typewriterScroll, focusMode } from "./writingModes";
 import { smartTypography } from "./smartTypography";
 import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import { annotations, insertAnnotation } from "./annotations";
 import { entityLinks, type EntityRef } from "./entityLinks";
 import { diagSquiggles, type Diag } from "./diagSquiggles";
 
@@ -40,6 +41,8 @@ export interface EditorApi {
    * Returns false when the text has drifted (stale diagnostic).
    */
   replaceRange(line: number, colStart: number, colEnd: number, expected: string, replacement: string): boolean;
+  /** Insert an annotation comment at the cursor (wrapping any selection). */
+  insertAnnotation(): void;
 }
 
 interface EditorProps {
@@ -133,7 +136,7 @@ export const EditorView: Component<EditorProps> = (props) => {
           }
           return true;
         }
-      }
+      },
     ]);
 
     const updateListener = CodeMirrorView.updateListener.of((update) => {
@@ -157,6 +160,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         entitiesCompartment.of(entityExtension()),
         diagsCompartment.of(diagSquiggles(props.diags ?? [])),
         autocompletion({ override: [codexCompletions], icons: false }),
+        annotations(),
         CodeMirrorView.lineWrapping,
         // Native spellcheck stays off: the diagnostics engine owns squiggles
         CodeMirrorView.contentAttributes.of({ spellcheck: "false", autocorrect: "on", autocapitalize: "on" }),
@@ -209,6 +213,10 @@ export const EditorView: Component<EditorProps> = (props) => {
         if (to > l.to || view.state.sliceDoc(from, to) !== expected) return false;
         view.dispatch({ changes: { from, to, insert: replacement } });
         return true;
+      },
+      insertAnnotation: () => {
+        insertAnnotation(view);
+        view.focus();
       },
     });
 

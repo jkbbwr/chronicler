@@ -781,6 +781,10 @@ const App: Component = () => {
       },
     },
     { id: "snapshot.history", title: "Snapshots: Show History", run: () => { setWorkbench("panels", "left", "visible", true); setWorkbench("panels", "left", "activeView", "history"); } },
+    {
+      id: "editor.annotate", title: "Editor: Insert Annotation", keybinding: "Mod+Shift+A",
+      run: () => { const f = activeFile(); if (f) editorApis.get(f)?.insertAnnotation(); },
+    },
     { id: "editor.toggleTypewriter", title: "Editor: Toggle Typewriter Scrolling", run: () => updateSettings({ typewriterMode: !workbench.settings.typewriterMode }) },
     { id: "editor.toggleFocus", title: "Editor: Toggle Focus Mode", run: () => updateSettings({ focusMode: !workbench.settings.focusMode }) },
     { id: "editor.modeCode", title: "Editor: Source Mode", run: () => updateSettings({ editorMode: "code" }) },
