@@ -1,8 +1,13 @@
 import { type Component, createEffect, createSignal, For, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { X, BookOpen } from "lucide-solid";
+import { X, BookOpen, GripVertical } from "lucide-solid";
 import { workbench, setWorkbench } from "../stores/workbench";
-import { buildTree, buildCompileChapters, ORDER_FILE, type CompileChapter } from "../lib/binderTree";
+import { buildTree, buildCompileChapters, chapterName, ORDER_FILE, type CompileChapter, type OrderMap } from "../lib/binderTree";
+
+interface CompileModalProps {
+  /** Called after scene reordering writes order.json, so the binder refetches. */
+  onOrderChanged?: () => void;
+}
 
 // Compile settings mirror the backend's CompileSettings (camelCase over RPC).
 interface CompileConfig {
@@ -54,7 +59,10 @@ const inputStyle = {
   "border-radius": "5px", outline: "none", "font-size": "13px",
 } as const;
 
-export const CompileModal: Component = () => {
+const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+const basename = (p: string) => p.split("/").pop()!;
+
+export const CompileModal: Component<CompileModalProps> = (props) => {
   const [chapters, setChapters] = createSignal<CompileChapter[]>([]);
   const [config, setConfig] = createStore<CompileConfig>({ ...DEFAULT_CONFIG });
   const [busy, setBusy] = createSignal(false);
@@ -62,22 +70,25 @@ export const CompileModal: Component = () => {
 
   const close = () => setWorkbench("isCompileOpen", false);
 
+  const loadChapters = async () => {
+    try {
+      const res = await window.chronicler.invoke("project/list_files");
+      let order: OrderMap = {};
+      try {
+        const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
+        order = JSON.parse(o.content);
+      } catch { /* no manual order yet */ }
+      setChapters(buildCompileChapters(buildTree(res.files, order)));
+    } catch {
+      setChapters([]);
+    }
+  };
+
   createEffect(() => {
     if (!workbench.isCompileOpen) return;
     setResult(null);
     (async () => {
-      // Content structure, in binder order
-      try {
-        const res = await window.chronicler.invoke("project/list_files");
-        let order = {};
-        try {
-          const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
-          order = JSON.parse(o.content);
-        } catch { /* no manual order yet */ }
-        setChapters(buildCompileChapters(buildTree(res.files, order)));
-      } catch {
-        setChapters([]);
-      }
+      await loadChapters();
       // Persisted settings from the project db
       try {
         const stored = await window.chronicler.invoke("db/get", { key: "compile" });
@@ -85,6 +96,36 @@ export const CompileModal: Component = () => {
       } catch { /* defaults */ }
     })();
   });
+
+  /** Reorder a scene within its chapter folder by rewriting order.json. */
+  const reorderScene = async (chapter: CompileChapter, fromPath: string, toPath: string, before: boolean) => {
+    if (fromPath === toPath) return;
+    // Only scenes directly inside the chapter folder can be reordered here
+    if (parentOf(fromPath) !== chapter.key || parentOf(toPath) !== chapter.key) return;
+
+    let order: OrderMap = {};
+    try {
+      const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
+      order = JSON.parse(o.content);
+    } catch { /* start fresh */ }
+
+    const names = chapter.scenes
+      .filter(s => parentOf(s) === chapter.key)
+      .map(basename)
+      .filter(n => n !== basename(fromPath));
+    let idx = names.indexOf(basename(toPath));
+    if (idx === -1) idx = names.length;
+    if (!before) idx += 1;
+    names.splice(idx, 0, basename(fromPath));
+    order[chapter.key] = names;
+
+    try {
+      await window.chronicler.invoke("project/create_folder", { rel_path: ".chronicler" });
+      await window.chronicler.invoke("document/save", { rel_path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
+    } catch { /* non-fatal */ }
+    await loadChapters();
+    props.onOrderChanged?.();
+  };
 
   const included = (key: string) => config.include[key] !== false; // default: included
 
@@ -158,19 +199,65 @@ export const CompileModal: Component = () => {
               <div style={{ "overflow-y": "auto", flex: 1, padding: "0 0 10px" }}>
                 <For each={chapters()}>
                   {(chapter, i) => (
-                    <label style={{ display: "flex", "align-items": "center", gap: "8px", padding: "6px 15px", cursor: "pointer", "font-size": "13px", color: included(chapter.key) ? "var(--text-main)" : "var(--text-faint)" }}>
-                      <input
-                        type="checkbox"
-                        checked={included(chapter.key)}
-                        onChange={(e) => setConfig("include", chapter.key, e.currentTarget.checked)}
-                      />
-                      <span style={{ flex: 1, "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
-                        {config.numbering ? `${i() + 1}. ` : ""}{chapter.title || "(untitled)"}
-                      </span>
-                      <span style={{ "font-size": "11px", color: "var(--text-faint)" }}>
-                        {chapter.scenes.length > 1 ? `${chapter.scenes.length} scenes` : ""}
-                      </span>
-                    </label>
+                    <div>
+                      <label style={{ display: "flex", "align-items": "center", gap: "8px", padding: "6px 15px", cursor: "pointer", "font-size": "13px", color: included(chapter.key) ? "var(--text-main)" : "var(--text-faint)" }}>
+                        <input
+                          type="checkbox"
+                          checked={included(chapter.key)}
+                          onChange={(e) => setConfig("include", chapter.key, e.currentTarget.checked)}
+                        />
+                        <span style={{ flex: 1, "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
+                          {config.numbering ? `${i() + 1}. ` : ""}{chapter.title || "(untitled)"}
+                        </span>
+                        <span style={{ "font-size": "11px", color: "var(--text-faint)" }}>
+                          {chapter.scenes.length > 1 ? `${chapter.scenes.length} scenes` : ""}
+                        </span>
+                      </label>
+                      {/* Scenes: shown for folder chapters, draggable to reorder */}
+                      <Show when={chapter.scenes.length > 1 || chapter.key !== chapter.scenes[0]}>
+                        <For each={chapter.scenes}>
+                          {(scene) => {
+                            const draggable = parentOf(scene) === chapter.key;
+                            return (
+                              <div
+                                draggable={draggable}
+                                onDragStart={(e) => e.dataTransfer?.setData("chronicler/scene", JSON.stringify({ chapter: chapter.key, path: scene }))}
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  const el = e.currentTarget;
+                                  const before = e.clientY - el.getBoundingClientRect().top < el.getBoundingClientRect().height / 2;
+                                  el.style.boxShadow = before ? "inset 0 2px 0 var(--accent)" : "inset 0 -2px 0 var(--accent)";
+                                }}
+                                onDragLeave={(e) => { e.currentTarget.style.boxShadow = ""; }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  const el = e.currentTarget;
+                                  const before = e.clientY - el.getBoundingClientRect().top < el.getBoundingClientRect().height / 2;
+                                  el.style.boxShadow = "";
+                                  const raw = e.dataTransfer?.getData("chronicler/scene");
+                                  if (!raw) return;
+                                  const from = JSON.parse(raw);
+                                  if (from.chapter === chapter.key) reorderScene(chapter, from.path, scene, before);
+                                }}
+                                title={draggable ? "Drag to reorder" : "Nested scenes are ordered in the binder"}
+                                style={{
+                                  display: "flex", "align-items": "center", gap: "6px",
+                                  padding: "3px 15px 3px 38px", "font-size": "12px",
+                                  color: "var(--text-muted)", cursor: draggable ? "grab" : "default",
+                                }}
+                                onMouseEnter={(e) => { if (draggable) e.currentTarget.style.backgroundColor = "var(--hover-bg)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                              >
+                                <GripVertical size={11} style={{ opacity: draggable ? 0.5 : 0.15, "flex-shrink": 0 }} />
+                                <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
+                                  {chapterName(basename(scene))}
+                                </span>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </Show>
+                    </div>
                   )}
                 </For>
                 <Show when={chapters().length === 0}>

@@ -768,7 +768,7 @@ const App: Component = () => {
         />
       )}
       <SettingsModal />
-      <CompileModal />
+      <CompileModal onOrderChanged={() => setFsVersion(v => v + 1)} />
       {welcome() && <WelcomeScreen recents={welcome()!} />}
     </div>
   );
