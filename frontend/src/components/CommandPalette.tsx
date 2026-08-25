@@ -1,5 +1,6 @@
 import { type Component, createSignal, createEffect, For, Show } from "solid-js";
 import { Search, Terminal } from "lucide-solid";
+import { commandList, formatKeybinding } from "../commands";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -13,12 +14,6 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const [query, setQuery] = createSignal("");
   const [files, setFiles] = createSignal<string[]>([]);
   const [selectedIndex, setSelectedIndex] = createSignal(0);
-
-  const commands = [
-    { id: "zen-mode", label: "View: Toggle Zen Mode" },
-    { id: "save-all", label: "File: Save All" },
-    { id: "open-settings", label: "Preferences: Open Settings" }
-  ];
 
   let inputRef!: HTMLInputElement;
 
@@ -42,10 +37,12 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const filteredItems = () => {
     if (isCommandMode()) {
       const q = query().slice(1).toLowerCase().trim();
-      return commands.filter(c => c.label.toLowerCase().includes(q));
+      return commandList()
+        .filter(c => c.title.toLowerCase().includes(q))
+        .map(c => ({ id: c.id, label: c.title, key: c.keybinding ? formatKeybinding(c.keybinding) : undefined }));
     } else {
       const q = query().toLowerCase().trim();
-      return files().filter(f => f.toLowerCase().includes(q)).map(f => ({ id: f, label: f }));
+      return files().filter(f => f.toLowerCase().includes(q)).map(f => ({ id: f, label: f, key: undefined as string | undefined }));
     }
   };
 
@@ -106,6 +103,7 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
                 <div
                   style={{
                     padding: "8px 15px", cursor: "pointer", "font-size": "13px",
+                    display: "flex", "justify-content": "space-between", "align-items": "center",
                     background: i() === selectedIndex() ? "var(--hover-bg)" : "transparent",
                     color: i() === selectedIndex() ? "var(--text-main)" : "var(--text-muted)",
                     "border-left": i() === selectedIndex() ? "2px solid var(--accent)" : "2px solid transparent"
@@ -117,7 +115,8 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
                     props.onClose();
                   }}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.key && <span style={{ "font-size": "11px", color: "var(--text-faint)", "font-family": "monospace" }}>{item.key}</span>}
                 </div>
               )}
             </For>

@@ -151,7 +151,9 @@ function setupMenu() {
           }, 
           accelerator: 'CmdOrCtrl+Shift+S' 
         },
-        isMac ? { role: 'close' } : { role: 'quit' }
+        { type: 'separator' },
+        { label: 'Close Tab', click: () => mainWindow?.webContents.send('menu-action', 'close-tab'), accelerator: 'CmdOrCtrl+W' },
+        isMac ? { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' } : { role: 'quit' }
       ]
     },
     {
@@ -168,7 +170,8 @@ function setupMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Command Palette', click: () => mainWindow?.webContents.send('menu-action', 'command-palette'), accelerator: 'CmdOrCtrl+P' },
+        { label: 'Go to File...', click: () => mainWindow?.webContents.send('menu-action', 'quick-open'), accelerator: 'CmdOrCtrl+P' },
+        { label: 'Command Palette', click: () => mainWindow?.webContents.send('menu-action', 'command-palette'), accelerator: 'CmdOrCtrl+Shift+P' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },

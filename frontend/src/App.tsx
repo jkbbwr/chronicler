@@ -11,6 +11,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { TabContextMenu } from "./components/editor/TabContextMenu";
 import { Divider } from "./components/Divider";
 import { X, Circle, ChevronRight } from "lucide-solid";
+import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
 interface TabState {
@@ -73,19 +74,11 @@ const App: Component = () => {
     window.addEventListener("click", handleGlobalClick);
     onCleanup(() => window.removeEventListener("click", handleGlobalClick));
     const handleGlobalKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+      if (e.defaultPrevented) return; // e.g. CodeMirror already handled it
+      const cmd = matchKeybinding(e);
+      if (cmd) {
         e.preventDefault();
-        setPaletteInitial(e.shiftKey ? ">" : "");
-        setShowPalette(true);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        setWorkbench("panels", "left", "visible", true); // Ensure binder is visible
-        setCreateTrigger(e.shiftKey ? "folder" : "file");
-        // Reset trigger after a moment so it can fire again later
-        setTimeout(() => setCreateTrigger(null), 100);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && e.shiftKey) {
-        e.preventDefault();
-        setWorkbench("zenMode", z => !z);
+        cmd.run();
       }
     };
     window.addEventListener("keydown", handleGlobalKey);
@@ -221,27 +214,42 @@ const App: Component = () => {
     }
   };
 
+  const triggerCreate = (kind: "file" | "folder") => {
+    setWorkbench("panels", "left", "visible", true);
+    setWorkbench("panels", "left", "activeView", "binder");
+    setCreateTrigger(kind);
+    setTimeout(() => setCreateTrigger(null), 100);
+  };
+
+  const saveActive = () => {
+    const current = activeTab();
+    if (current) {
+      const tab = getTab(current);
+      if (tab) handleSave(current, tab.content);
+    }
+  };
+
+  const saveAll = () => {
+    for (const tab of tabs) {
+      if (tab.isDirty) handleSave(tab.filename, tab.content);
+    }
+  };
+
   const handleMenuCommand = (action: string) => {
     if (action === "new-chapter" || action === "new-file") {
-      setWorkbench("panels", "left", "visible", true);
-      setCreateTrigger("file");
-      setTimeout(() => setCreateTrigger(null), 100);
+      triggerCreate("file");
     } else if (action === "new-folder") {
-      setWorkbench("panels", "left", "visible", true);
-      setCreateTrigger("folder");
-      setTimeout(() => setCreateTrigger(null), 100);
+      triggerCreate("folder");
     } else if (action === "command-palette") {
-      setShowPalette(true);
+      runCommand("view.commandPalette");
+    } else if (action === "quick-open") {
+      runCommand("view.quickOpen");
+    } else if (action === "close-tab") {
+      runCommand("file.closeTab");
     } else if (action === "save-file") {
-      const current = activeTab();
-      if (current) {
-        const tab = getTab(current);
-        if (tab) handleSave(current, tab.content);
-      }
+      saveActive();
     } else if (action === "save-all") {
-      for (const tab of tabs) {
-        if (tab.isDirty) handleSave(tab.filename, tab.content);
-      }
+      saveAll();
     } else if (action === "project-opened") {
       // Null the root FIRST: clearing tabs below re-runs the session effect,
       // and with the old root still set it would wipe that project's session.
@@ -450,6 +458,47 @@ const App: Component = () => {
     setActiveTab(filename);
   };
 
+  // Most-recently-used tab order, for Ctrl+Tab switching
+  let mruOrder: string[] = [];
+  createEffect(() => {
+    const current = activeTab();
+    const open = tabs.map(t => t.filename);
+    if (current) mruOrder = [current, ...mruOrder.filter(f => f !== current)];
+    mruOrder = mruOrder.filter(f => open.includes(f));
+  });
+
+  const reorderTab = (from: string, to: string) => {
+    if (from === to) return;
+    const arr = [...tabs];
+    const fi = arr.findIndex(t => t.filename === from);
+    const ti = arr.findIndex(t => t.filename === to);
+    if (fi < 0 || ti < 0) return;
+    const [moved] = arr.splice(fi, 1);
+    arr.splice(ti, 0, moved);
+    setTabs(arr);
+  };
+
+  registerCommands([
+    { id: "view.commandPalette", title: "View: Command Palette", keybinding: "Mod+Shift+P", run: () => { setPaletteInitial(">"); setShowPalette(true); } },
+    { id: "view.quickOpen", title: "Go to File...", keybinding: "Mod+P", run: () => { setPaletteInitial(""); setShowPalette(true); } },
+    { id: "view.zenMode", title: "View: Toggle Zen Mode", keybinding: "Mod+Shift+Z", run: () => setWorkbench("zenMode", z => !z) },
+    { id: "view.settings", title: "Preferences: Open Settings", run: () => setWorkbench("isSettingsOpen", true) },
+    { id: "file.newFile", title: "File: New File", keybinding: "Mod+N", run: () => triggerCreate("file") },
+    { id: "file.newFolder", title: "File: New Folder", keybinding: "Mod+Shift+N", run: () => triggerCreate("folder") },
+    { id: "file.save", title: "File: Save", keybinding: "Mod+S", run: saveActive },
+    { id: "file.saveAll", title: "File: Save All", run: saveAll },
+    { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
+    { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
+    { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
+    ...Array.from({ length: 9 }, (_, i) => ({
+      id: `tab.goto${i + 1}`,
+      title: `View: Go to Tab ${i + 1}`,
+      keybinding: `Mod+${i + 1}`,
+      hidden: true,
+      run: () => { const t = tabs[i]; if (t) setActiveTab(t.filename); },
+    })),
+  ]);
+
   return (
     <div class="workbench" style={{ display: 'flex', 'flex-direction': 'column', height: '100vh' }}>
       <div class="titlebar">
@@ -499,7 +548,16 @@ const App: Component = () => {
                     {(tab) => (
                       <div
                         class={`tab ${activeTab() === tab.filename ? "active" : ""}`}
+                        draggable={true}
+                        onDragStart={(e) => e.dataTransfer?.setData("chronicler/tab", tab.filename)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const from = e.dataTransfer?.getData("chronicler/tab");
+                          if (from) reorderTab(from, tab.filename);
+                        }}
                         onClick={() => setActiveTab(tab.filename)}
+                        onAuxClick={(e) => { if (e.button === 1) closeTab(tab.filename, e); }}
                         onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, filename: tab.filename }); }}
                         style={{ cursor: 'pointer', display: 'flex', 'align-items': 'center', gap: '8px' }}
                       >
@@ -619,7 +677,7 @@ const App: Component = () => {
         initialQuery={paletteInitial()}
         onClose={() => setShowPalette(false)}
         onSelectFile={openTab}
-        onSelectCommand={handleMenuCommand}
+        onSelectCommand={runCommand}
       />
       {contextMenu() && (
         <TabContextMenu
