@@ -1,11 +1,12 @@
 import { type Component, For } from "solid-js";
 import { workbench, setWorkbench, setActiveView, togglePanel } from "../../stores/workbench";
-import { Folder, Search, Settings } from "lucide-solid";
+import { Folder, Search, History, Settings } from "lucide-solid";
 
 export const ActivityBar: Component = () => {
   const views = [
     { id: "binder", icon: Folder, tooltip: "Project Binder" },
     { id: "search", icon: Search, tooltip: "Search" },
+    { id: "history", icon: History, tooltip: "Snapshots" },
   ];
 
   const handleIconClick = (viewId: any) => {

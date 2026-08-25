@@ -2,7 +2,7 @@ import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
 
 export type PanelId = "left" | "right" | "bottom" | "center";
-export type ViewId = "binder" | "codex" | "agent" | "editor" | "outliner" | "search" | "terminal";
+export type ViewId = "binder" | "codex" | "agent" | "editor" | "outliner" | "search" | "terminal" | "history";
 
 export interface View {
   id: ViewId;
@@ -80,7 +80,7 @@ export const [workbench, setWorkbench] = createStore<WorkbenchState>({
       size: 250,
       visible: true,
       activeView: "binder",
-      views: ["binder", "search"],
+      views: ["binder", "search", "history"],
     },
     right: {
       id: "right",

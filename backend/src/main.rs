@@ -83,6 +83,29 @@ fn search_files(dir: &Path, prefix: &str, query_lower: &str, results: &mut Vec<s
     }
 }
 
+/// Run git in the project root with a fixed snapshot identity.
+fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["-c", "user.name=Chronicler", "-c", "user.email=snapshots@chronicler.local"])
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+fn ensure_repo(root: &Path) -> Result<(), String> {
+    if run_git(root, &["rev-parse", "--git-dir"]).is_err() {
+        run_git(root, &["init"])?;
+    }
+    Ok(())
+}
+
 fn get_files_recursive(dir: &Path, prefix: &str, files: &mut Vec<serde_json::Value>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -228,6 +251,53 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
             "status": "ready",
             "root": root.display().to_string()
         })),
+        "snapshot/create" => {
+            let message = req.params["message"].as_str().unwrap_or("Snapshot");
+            let result = (|| -> Result<Value, String> {
+                ensure_repo(root)?;
+                run_git(root, &["add", "-A"])?;
+                let status = run_git(root, &["status", "--porcelain"])?;
+                if status.trim().is_empty() {
+                    return Ok(json!({ "created": false, "reason": "No changes since last snapshot" }));
+                }
+                run_git(root, &["commit", "-m", message])?;
+                Ok(json!({ "created": true }))
+            })();
+            result.map_err(|e| (-32000, e))
+        },
+        "snapshot/list" => {
+            match run_git(root, &["log", "--pretty=format:%H\u{1f}%ct\u{1f}%s", "-n", "50"]) {
+                Err(_) => Ok(json!({ "snapshots": [] })), // not a repo yet
+                Ok(log) => {
+                    let snapshots: Vec<Value> = log
+                        .lines()
+                        .filter_map(|line| {
+                            let mut parts = line.split('\u{1f}');
+                            let hash = parts.next()?;
+                            let timestamp: i64 = parts.next()?.parse().ok()?;
+                            let message = parts.next().unwrap_or("");
+                            Some(json!({ "hash": hash, "timestamp": timestamp, "message": message }))
+                        })
+                        .collect();
+                    Ok(json!({ "snapshots": snapshots }))
+                }
+            }
+        },
+        "snapshot/restore_file" => {
+            let hash = req.params["hash"].as_str().unwrap_or("");
+            let rel_path = req.params["rel_path"].as_str().unwrap_or("");
+            if hash.is_empty() || rel_path.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                Err((-32602, "Missing or invalid hash/rel_path".to_string()))
+            } else {
+                match resolve_path(root, rel_path) {
+                    Err(e) => Err((-32602, e)),
+                    Ok(_) => match run_git(root, &["checkout", hash, "--", rel_path]) {
+                        Ok(_) => Ok(json!({ "success": true })),
+                        Err(e) => Err((-32000, format!("Failed to restore: {}", e))),
+                    },
+                }
+            }
+        },
         "project/search" => {
             let query = req.params["query"].as_str().unwrap_or("");
             if query.is_empty() {

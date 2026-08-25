@@ -6,6 +6,7 @@ import { MarkdownPreview } from "./components/editor/MarkdownPreview";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { OutlinerView } from "./components/sidebar/OutlinerView";
+import { HistoryView } from "./components/sidebar/HistoryView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ActivityBar } from "./components/sidebar/ActivityBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -492,6 +493,18 @@ const App: Component = () => {
     { id: "file.closeTab", title: "File: Close Tab", keybinding: "Mod+W", run: () => { const c = activeTab(); if (c) closeTab(c); } },
     { id: "tab.mruNext", title: "View: Switch to Recent Tab", keybinding: "Ctrl+Tab", run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[1]); } },
     { id: "tab.mruLast", title: "View: Switch to Least Recent Tab", keybinding: "Ctrl+Shift+Tab", hidden: true, run: () => { if (mruOrder.length > 1) setActiveTab(mruOrder[mruOrder.length - 1]); } },
+    {
+      id: "snapshot.create", title: "Snapshots: Take Snapshot",
+      run: async () => {
+        try {
+          const res = await window.chronicler.invoke("snapshot/create", { message: `Snapshot ${new Date().toLocaleString()}` });
+          setStatus(res.created ? "Snapshot saved" : res.reason);
+        } catch (err: any) {
+          setStatus(`Snapshot failed: ${err.message}`);
+        }
+      },
+    },
+    { id: "snapshot.history", title: "Snapshots: Show History", run: () => { setWorkbench("panels", "left", "visible", true); setWorkbench("panels", "left", "activeView", "history"); } },
     { id: "editor.toggleTypewriter", title: "Editor: Toggle Typewriter Scrolling", run: () => updateSettings({ typewriterMode: !workbench.settings.typewriterMode }) },
     { id: "editor.toggleFocus", title: "Editor: Toggle Focus Mode", run: () => updateSettings({ focusMode: !workbench.settings.focusMode }) },
     { id: "editor.modeCode", title: "Editor: Source Mode", run: () => updateSettings({ editorMode: "code" }) },
@@ -546,6 +559,9 @@ const App: Component = () => {
                   )}
                   {workbench.panels.left.activeView === "search" && (
                     <SearchView onOpenResult={openSearchResult} />
+                  )}
+                  {workbench.panels.left.activeView === "history" && (
+                    <HistoryView activeFile={activeTab()} onStatus={setStatus} />
                   )}
                 </div>
                 <div style={{ padding: "5px 10px", "font-size": "11px", color: "var(--accent)", "border-top": "1px solid var(--border-color)" }}>
