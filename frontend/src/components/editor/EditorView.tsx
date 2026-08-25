@@ -9,6 +9,7 @@ import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language"
 import { workbench, resolvedTheme, isLightTheme } from "../../stores/workbench";
 import { livePreview } from "./livePreview";
 import { typewriterScroll, focusMode } from "./writingModes";
+import { entityLinks, type EntityRef } from "./entityLinks";
 
 // Chrome for light themes; dark themes use oneDark
 const cmLight = [
@@ -33,9 +34,12 @@ export interface EditorApi {
 
 interface EditorProps {
   initialContent: string;
+  /** Codex entities to highlight, longest-pattern-first. */
+  entityRefs?: EntityRef[];
   onSave?: (content: string) => void;
   onChange?: (content: string) => void;
   onReady?: (api: EditorApi) => void;
+  onOpenEntity?: (id: number, name: string) => void;
 }
 
 export const EditorView: Component<EditorProps> = (props) => {
@@ -49,6 +53,10 @@ export const EditorView: Component<EditorProps> = (props) => {
   const modeCompartment = new Compartment();
   const colorCompartment = new Compartment();
   const writingCompartment = new Compartment();
+  const entitiesCompartment = new Compartment();
+
+  const entityExtension = () =>
+    entityLinks(props.entityRefs ?? [], (id, name) => props.onOpenEntity?.(id, name));
 
   const writingExtensions = () => [
     ...(workbench.settings.typewriterMode ? [typewriterScroll()] : []),
@@ -112,6 +120,7 @@ export const EditorView: Component<EditorProps> = (props) => {
         themeCompartment.of(proseTheme(workbench.settings.fontFamily, workbench.settings.fontSize)),
         modeCompartment.of(workbench.settings.editorMode === "live" ? livePreview() : []),
         writingCompartment.of(writingExtensions()),
+        entitiesCompartment.of(entityExtension()),
         CodeMirrorView.lineWrapping,
         // Native spellcheck needs these on the contenteditable element
         CodeMirrorView.contentAttributes.of({ spellcheck: "true", autocorrect: "on", autocapitalize: "on" }),
@@ -165,6 +174,10 @@ export const EditorView: Component<EditorProps> = (props) => {
 
     createEffect(() => {
       view.dispatch({ effects: writingCompartment.reconfigure(writingExtensions()) });
+    });
+
+    createEffect(() => {
+      view.dispatch({ effects: entitiesCompartment.reconfigure(entityExtension()) });
     });
 
     onCleanup(() => {

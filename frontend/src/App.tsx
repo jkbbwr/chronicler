@@ -2,6 +2,7 @@ import { createSignal, createEffect, onMount, onCleanup, For, Show, type Compone
 import { createStore } from "solid-js/store";
 import { workbench, setWorkbench, updateSettings, type EditorMode } from "./stores/workbench";
 import { EditorView, type EditorApi } from "./components/editor/EditorView";
+import { type EntityRef } from "./components/editor/entityLinks";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
@@ -76,6 +77,27 @@ const App: Component = () => {
   const [codexVersion, setCodexVersion] = createSignal(0);
   // Editor selection awaiting "promote to codex" (with its cursor line)
   const [codexDraft, setCodexDraft] = createSignal<{ name: string; line: number } | null>(null);
+  // Entity names/aliases for in-editor highlighting, longest-first
+  const [entityRefs, setEntityRefs] = createSignal<EntityRef[]>([]);
+
+  createEffect(() => {
+    codexVersion(); // refresh whenever codex state changes
+    (async () => {
+      try {
+        const res = await window.chronicler.invoke("codex/list");
+        const refs: EntityRef[] = [];
+        for (const e of res.entities) {
+          refs.push({ pattern: e.name.toLowerCase(), id: e.id, name: e.name });
+          for (const a of e.aliases as string[]) {
+            refs.push({ pattern: a.toLowerCase(), id: e.id, name: e.name });
+          }
+        }
+        setEntityRefs(refs.filter(r => r.pattern.length >= 2).sort((a, b) => b.pattern.length - a.pattern.length));
+      } catch {
+        // Backend restarting; next codexVersion bump retries
+      }
+    })();
+  });
 
   const tabIndex = (id: string) => tabs.findIndex(t => t.id === id);
   const getTab = (id: string) => tabs.find(t => t.id === id);
@@ -782,9 +804,11 @@ const App: Component = () => {
                       ) : (
                         <EditorView
                           initialContent={tab.content ?? ""}
+                          entityRefs={entityRefs()}
                           onSave={(c) => handleSave(tab.filename!, c)}
                           onChange={(c) => handleEditorChange(tab.filename!, c)}
                           onReady={(api) => editorApis.set(tab.filename!, api)}
+                          onOpenEntity={openEntityTab}
                         />
                       )
                     )}
