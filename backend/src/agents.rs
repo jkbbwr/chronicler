@@ -1,7 +1,7 @@
-use crate::{ai, codex, db, embed};
+use crate::{ai, codex, embed};
 use anyhow::{bail, Context, Result};
 use rig_agent::agent::{Agent, AgentBuilder, MultiTurnStreamItem};
-use rig_agent::completion::Message;
+use rig_agent::completion::{Message, Prompt};
 use rig_agent::streaming::{StreamedAssistantContent, StreamingChat};
 use rig_agent::tool::{Tool, ToolContext};
 use rig_core::client::completion::CompletionClient;
@@ -175,7 +175,7 @@ impl Tool for SearchManuscript {
         let (files, chunks) = embed::stats(&self.root).map_err(fail)?;
         if chunks == 0 {
             return Ok(json!({
-                "error": "The manuscript is not indexed yet. Ask the writer to run 'Rig: Index Manuscript' — falling back to grep_manuscript may help meanwhile."
+                "error": "The manuscript is not indexed yet. Ask the writer to run 'Agent: Index Manuscript' — falling back to grep_manuscript may help meanwhile."
             }));
         }
         let hits = embed::search(&self.root, &args.query, args.limit.unwrap_or(5).clamp(1, 12))
@@ -398,6 +398,31 @@ fn build_agent(root: &Path, preamble: &str) -> Result<Agent> {
     Ok(agent)
 }
 
+/// A tool-less agent for one-shot jobs (field drafting, codex extraction,
+/// connection tests): preamble + single prompt, no conversation, no tools.
+fn build_bare_agent(root: &Path, preamble: &str) -> Result<Agent> {
+    let cfg = ai::load_config(root);
+    let agent = match provider(root)? {
+        Provider::OpenRouter(client) => {
+            AgentBuilder::new(client.completion_model(&cfg.model)).preamble(preamble).build()
+        }
+        Provider::Compat(client) => {
+            AgentBuilder::new(client.completion_model(&cfg.model)).preamble(preamble).build()
+        }
+    };
+    Ok(agent)
+}
+
+/// One-shot completion through the configured provider.
+pub async fn one_shot(root: &Path, system: &str, user: &str) -> Result<String> {
+    let agent = build_bare_agent(root, system)?;
+    let text = agent.prompt(user).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    if text.trim().is_empty() {
+        bail!("model returned an empty response");
+    }
+    Ok(text)
+}
+
 async fn notify(tx: &mpsc::Sender<String>, method: &str, params: Value) {
     let msg = json!({ "jsonrpc": "2.0", "method": method, "params": params });
     if let Ok(s) = serde_json::to_string(&msg) {
@@ -474,6 +499,109 @@ pub async fn run_chat(
         }
     }
     Ok(text)
+}
+
+// ---------- Field filling (codex "draft from manuscript") ----------
+
+/// Draft a codex field from the manuscript: gather every passage that
+/// mentions the entity (plus semantic neighbours when the index is live),
+/// then ask the model to write just that field.
+pub async fn fill_field(root: &Path, entity_id: i64, field: &str) -> Result<String> {
+    let all = codex::list_entities(root)?;
+    let entity = all["entities"]
+        .as_array()
+        .and_then(|es| es.iter().find(|e| e["id"].as_i64() == Some(entity_id)).cloned())
+        .context("entity not found")?;
+    let name = entity["name"].as_str().unwrap_or("").to_string();
+    let kind = entity["kind"].as_str().unwrap_or("").to_string();
+    let aliases: Vec<String> = entity["aliases"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // Passages around every indexed mention, grouped by scene
+    let mut evidence = String::new();
+    let mentions = codex::entity_mentions(root, entity_id)?;
+    let mut by_file: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
+    if let Some(list) = mentions["mentions"].as_array() {
+        for m in list.iter().take(60) {
+            if let (Some(f), Some(l)) = (m["file"].as_str(), m["line"].as_u64()) {
+                by_file.entry(f.to_string()).or_default().push(l as usize);
+            }
+        }
+    }
+    for (file, lines) in &by_file {
+        let Ok(path) = crate::resolve_path(root, file) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let all_lines: Vec<&str> = content.lines().collect();
+        evidence.push_str(&format!("\n## {}\n", file));
+        let mut last_end = 0usize;
+        for &line in lines {
+            let start = line.saturating_sub(2).max(1).max(last_end + 1);
+            let end = (line + 1).min(all_lines.len());
+            if start > end {
+                continue;
+            }
+            evidence.push_str(&format!("[lines {}-{}]\n", start, end));
+            for l in &all_lines[start - 1..end] {
+                evidence.push_str(l);
+                evidence.push('\n');
+            }
+            last_end = end;
+        }
+        if evidence.len() > 18_000 {
+            break;
+        }
+    }
+
+    // Semantic neighbours: passages about the entity that don't name it
+    if embed::stats(root).map(|(_, c)| c > 0).unwrap_or(false)
+        && embed::index_is_current_model(root)
+    {
+        let query = format!("{} {} {}", name, aliases.join(" "), kind);
+        if let Ok(hits) = embed::search(root, &query, 4).await {
+            evidence.push_str("\n## Related passages (by meaning)\n");
+            for h in hits {
+                evidence.push_str(&format!("[{} lines {}-{}]\n{}\n", h.file, h.start_line, h.end_line, h.text));
+            }
+        }
+    }
+    if evidence.trim().is_empty() {
+        bail!("no manuscript passages mention \"{}\" yet — nothing to draft from", name);
+    }
+    let evidence: String = evidence.chars().take(24_000).collect();
+
+    let instruction = match field {
+        "summary" => {
+            "Write the SUMMARY field: one crisp sentence (under 25 words) saying who or what this \
+             is, at a glance. Output only the sentence."
+        }
+        "body" => {
+            "Write the NOTES field: organized world-bible notes covering only what the manuscript \
+             establishes — facts, relationships, history, physical details, and open questions \
+             worth tracking. Short markdown bullets grouped under bold headers where it helps. \
+             No invention beyond the text; mark uncertain readings with (?). Output only the notes."
+        }
+        other => bail!("unknown field: {}", other),
+    };
+
+    let system = "You maintain the world bible inside a fiction writer's IDE. You draft entry \
+        fields strictly from manuscript passages the app provides. Never invent facts the text \
+        does not support. Write in the writer's service: terse, concrete, spoiler-tolerant. \
+        Output only the requested field content — no preamble, no code fences.";
+    let user = format!(
+        "Entity: {} (kind: {}){}\nCurrent summary: {}\nCurrent notes:\n{}\n\n{}\n\n# Manuscript passages\n{}",
+        name,
+        kind,
+        if aliases.is_empty() { String::new() } else { format!(" — aliases: {}", aliases.join(", ")) },
+        entity["summary"].as_str().unwrap_or("(empty)"),
+        entity["body"].as_str().unwrap_or("(empty)"),
+        instruction,
+        evidence
+    );
+
+    let text = one_shot(root, system, &user).await?;
+    Ok(text.trim().to_string())
 }
 
 /// The last message is the live prompt; everything before it is history.

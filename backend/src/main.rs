@@ -483,6 +483,14 @@ async fn handle_request_line(
                 }
             }
         }
+        "agents/fill" => {
+            let id = req.params["id"].as_i64().unwrap_or(-1);
+            let field = req.params["field"].as_str().unwrap_or("").to_string();
+            match agents::fill_field(root, id, &field).await {
+                Ok(text) => Ok(json!({ "text": text })),
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
         "agents/index" => match embed::reindex_all(root).await {
             Ok((files, chunks)) => Ok(json!({ "files": files, "chunks": chunks })),
             Err(e) => Err(rpc_err(e)),
@@ -549,32 +557,6 @@ async fn handle_request_line(
         "ai/test" => match ai::test_connection(root).await {
             Ok(reply) => Ok(json!({ "ok": true, "reply": reply })),
             Err(e) => Err(rpc_err(e)),
-        },
-        "ai/chat" => {
-            let messages = req.params["messages"].as_array().cloned().unwrap_or_default();
-            if messages.is_empty() {
-                Err((-32000, "Missing param: messages".to_string()))
-            } else {
-                match ai::rig_chat(root, &messages, req.params["context"].as_str()).await {
-                    Ok(text) => Ok(json!({ "text": text })),
-                    Err(e) => Err(rpc_err(e)),
-                }
-            }
-        },
-        "ai/set_key" => {
-            ai::set_key(req.params["key"].as_str().unwrap_or(""));
-            Ok(json!({ "success": true }))
-        },
-        "ai/scan" => {
-            let rel = req.params["rel_path"].as_str().unwrap_or("").to_string();
-            if rel.is_empty() {
-                Err((-32000, "Missing param: rel_path".to_string()))
-            } else {
-                match ai::scan_file(root, &rel).await {
-                    Ok((new, aliases)) => Ok(json!({ "newCandidates": new, "aliasesAdded": aliases })),
-                    Err(e) => Err(rpc_err(e)),
-                }
-            }
         },
         "compile/run" => compile_run(root, &req.params).map_err(rpc_err),
         "snapshot/create" => snapshot_create(root, &req.params).map_err(rpc_err),

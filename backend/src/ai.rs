@@ -125,42 +125,6 @@ fn auth_key(cfg: &AiConfig) -> Result<Option<String>> {
     }
 }
 
-/// One chat-completions round trip. `messages` are OpenAI-shaped
-/// [{"role": "user"|"assistant", "content": "..."}] turns.
-pub async fn chat(cfg: &AiConfig, system: &str, messages: &[Value]) -> Result<String> {
-    let base = api_base(cfg)?;
-    let mut all = vec![json!({ "role": "system", "content": system })];
-    all.extend(messages.iter().cloned());
-
-    let mut req = reqwest::Client::new()
-        .post(format!("{}/chat/completions", base))
-        .json(&json!({ "model": cfg.model, "messages": all }));
-    if let Some(k) = auth_key(cfg)? {
-        req = req.bearer_auth(k);
-    }
-    if cfg.provider == "openrouter" {
-        // Attribution headers OpenRouter asks apps to send
-        req = req.header("X-Title", "Chronicler");
-    }
-
-    let resp = req.send().await.with_context(|| format!("calling {}", base))?;
-    let status = resp.status();
-    let body: Value = resp.json().await.context("reading model response")?;
-    if !status.is_success() || body["error"].is_object() {
-        let msg = body["error"]["message"].as_str().unwrap_or("unknown error");
-        bail!("AI provider error ({}): {}", status, msg);
-    }
-    let text = body["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
-    if text.is_empty() {
-        bail!("model returned an empty response");
-    }
-    Ok(text)
-}
-
-async fn complete(cfg: &AiConfig, system: &str, user: &str) -> Result<String> {
-    chat(cfg, system, &[json!({ "role": "user", "content": user })]).await
-}
-
 /// List model ids from the provider's /models endpoint.
 pub async fn list_models(cfg: &AiConfig) -> Result<Vec<String>> {
     let base = api_base(cfg)?;
@@ -185,27 +149,8 @@ pub async fn list_models(cfg: &AiConfig) -> Result<Vec<String>> {
 
 /// Cheap round trip to prove the config works. Returns the model's reply.
 pub async fn test_connection(root: &Path) -> Result<String> {
-    let cfg = load_config(root);
-    complete(&cfg, "You are a connection test.", "Reply with the single word: ok").await
-}
-
-const RIG_SYSTEM: &str = "You are the rig — the writing assistant built into Chronicler, an IDE for \
-fiction. You help with drafting, revision, continuity, and craft. Be direct and concrete; quote the \
-writer's own words when discussing them. Never rewrite wholesale unless asked — suggest, don't replace. \
-Plain prose only unless the writer asks for markdown structure.";
-
-/// One rig conversation turn. `context` is optional working-state the
-/// frontend chooses to attach (e.g. the scene being edited).
-pub async fn rig_chat(root: &Path, messages: &[Value], context: Option<&str>) -> Result<String> {
-    let cfg = load_config(root);
-    let system = match context {
-        Some(ctx) if !ctx.trim().is_empty() => {
-            let ctx: String = ctx.chars().take(24_000).collect();
-            format!("{}\n\n{}", RIG_SYSTEM, ctx)
-        }
-        _ => RIG_SYSTEM.to_string(),
-    };
-    chat(&cfg, &system, messages).await
+    crate::agents::one_shot(root, "You are a connection test.", "Reply with the single word: ok")
+        .await
 }
 
 const EXTRACTION_INSTRUCTION: &str = "You are an entity extractor for a fiction writer's world bible. \
@@ -243,7 +188,6 @@ fn parse_extraction(text: &str) -> Result<Vec<Value>> {
 /// Alias suggestions ("aliasOf") are applied directly as aliases when the
 /// referenced entity exists, since the model had the known list in hand.
 pub async fn scan_file(root: &Path, rel: &str) -> Result<(usize, usize)> {
-    let cfg = load_config(root);
     let path = crate::resolve_path(root, rel)?;
     let content = std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?;
 
@@ -261,7 +205,9 @@ pub async fn scan_file(root: &Path, rel: &str) -> Result<(usize, usize)> {
         })
         .unwrap_or_default();
 
-    let text = complete(&cfg, EXTRACTION_INSTRUCTION, &build_prompt(&content, &known)).await?;
+    let text =
+        crate::agents::one_shot(root, EXTRACTION_INSTRUCTION, &build_prompt(&content, &known))
+            .await?;
     let extracted = parse_extraction(&text)?;
 
     let mut aliases_added = 0;

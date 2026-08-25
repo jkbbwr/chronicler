@@ -1,5 +1,5 @@
 import { type Component, createResource, createSignal, For, Show } from "solid-js";
-import { Trash2 } from "lucide-solid";
+import { Search, Trash2 } from "lucide-solid";
 import { KINDS } from "../sidebar/CodexView";
 
 // A codex entity opened as a center tab: room to actually write about the
@@ -28,6 +28,7 @@ const input = {
 
 export const EntitySheet: Component<EntitySheetProps> = (props) => {
   const [saved, setSaved] = createSignal("");
+  const [filling, setFilling] = createSignal<"summary" | "body" | null>(null);
 
   const [entity, { refetch }] = createResource(
     () => [props.entityId, props.refreshVersion] as const,
@@ -64,6 +65,46 @@ export const EntitySheet: Component<EntitySheetProps> = (props) => {
       props.onStatus(`Save failed: ${err.message}`);
     }
   };
+
+  // Ask the agent to draft this field from the manuscript's own passages
+  const fill = async (field: "summary" | "body") => {
+    if (filling()) return;
+    setFilling(field);
+    props.onStatus(`Drafting ${field === "body" ? "notes" : "summary"} from the manuscript...`);
+    try {
+      const res = await window.chronicler.invoke("agents/fill", { id: props.entityId, field });
+      await save({ [field]: res.text });
+      props.onStatus(`Drafted ${field === "body" ? "notes" : "summary"} — edit freely, nothing is sacred`);
+    } catch (err: any) {
+      props.onStatus(`Draft failed: ${err.message}`);
+    } finally {
+      setFilling(null);
+    }
+  };
+
+  const FillButton: Component<{ field: "summary" | "body" }> = (p) => (
+    <button
+      onClick={() => fill(p.field)}
+      title="Draft from manuscript — the agent reads every mention and fills this in"
+      disabled={!!filling()}
+      style={{
+        position: "absolute", top: "7px", right: "7px",
+        display: "flex", "align-items": "center", "justify-content": "center",
+        width: "24px", height: "24px", padding: 0,
+        background: "var(--panel-bg)", border: "1px solid var(--border-color)",
+        "border-radius": "5px", cursor: filling() ? "wait" : "pointer",
+        color: filling() === p.field ? "var(--accent)" : "var(--text-faint)",
+        opacity: filling() && filling() !== p.field ? 0.4 : 1,
+      }}
+      onMouseEnter={(ev) => { if (!filling()) ev.currentTarget.style.color = "var(--accent)"; }}
+      onMouseLeave={(ev) => { if (!filling()) ev.currentTarget.style.color = "var(--text-faint)"; }}
+    >
+      <Search
+        size={13}
+        style={filling() === p.field ? { animation: "pulse 1s ease-in-out infinite" } : {}}
+      />
+    </button>
+  );
 
   const remove = async () => {
     const e = entity();
@@ -112,17 +153,30 @@ export const EntitySheet: Component<EntitySheetProps> = (props) => {
 
             <div style={{ "margin-bottom": "24px" }}>
               <label style={fieldLabel}>Summary</label>
-              <input style={input} value={e().summary} placeholder="One line you'd want at a glance" onChange={(ev) => save({ summary: ev.currentTarget.value })} />
+              <div style={{ position: "relative" }}>
+                <input
+                  style={{ ...input, "padding-right": "38px" }}
+                  value={filling() === "summary" ? "Reading the manuscript…" : e().summary}
+                  disabled={filling() === "summary"}
+                  placeholder="One line you'd want at a glance"
+                  onChange={(ev) => save({ summary: ev.currentTarget.value })}
+                />
+                <FillButton field="summary" />
+              </div>
             </div>
 
             <div style={{ "margin-bottom": "28px" }}>
               <label style={fieldLabel}>Notes</label>
-              <textarea
-                style={{ ...input, "min-height": "260px", resize: "vertical", "line-height": "1.6", "font-family": "inherit" }}
-                value={e().body}
-                placeholder="Everything the manuscript needs you to remember."
-                onChange={(ev) => save({ body: ev.currentTarget.value })}
-              />
+              <div style={{ position: "relative" }}>
+                <textarea
+                  style={{ ...input, "min-height": "260px", resize: "vertical", "line-height": "1.6", "font-family": "inherit", "padding-right": "38px" }}
+                  value={filling() === "body" ? "Reading every mention and drafting notes…" : e().body}
+                  disabled={filling() === "body"}
+                  placeholder="Everything the manuscript needs you to remember."
+                  onChange={(ev) => save({ body: ev.currentTarget.value })}
+                />
+                <FillButton field="body" />
+              </div>
             </div>
 
             <div>
