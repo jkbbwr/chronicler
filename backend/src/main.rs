@@ -14,6 +14,7 @@ mod db;
 mod diagnostics;
 mod ner;
 mod rpc;
+mod stats;
 use rpc::protocol::{JsonRpcRequest, JsonRpcResponse};
 
 type AnyResult<T> = anyhow::Result<T>;
@@ -430,6 +431,10 @@ async fn handle_request_line(root: &Path, line: &str) -> Option<JsonRpcResponse>
         "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
         "codex/reindex" => codex_reindex(root).map_err(rpc_err),
         "codex/scan" => codex_scan(root, &req.params).map_err(rpc_err),
+        "stats/get" => (|| -> AnyResult<Value> {
+            let today = param(&req.params, "today")?;
+            stats::project_stats(root, today)
+        })().map_err(rpc_err),
         "diag/status" => Ok(json!({ "ready": diagnostics::is_ready(), "langDir": diagnostics::lang_dir().display().to_string() })),
         "diag/ensure" => match diagnostics::ensure_models().await {
             Ok(()) => Ok(json!({ "ready": diagnostics::is_ready() })),

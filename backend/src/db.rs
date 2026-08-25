@@ -87,6 +87,16 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 4;",
         )?;
     }
+    if version < 5 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS writing_days (
+                 date   TEXT PRIMARY KEY,
+                 start  INTEGER NOT NULL,
+                 latest INTEGER NOT NULL
+             );
+             PRAGMA user_version = 5;",
+        )?;
+    }
     Ok(())
 }
 

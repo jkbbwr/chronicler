@@ -18,6 +18,7 @@ import { EntitySheet } from "./components/center/EntitySheet";
 import { InboxView } from "./components/center/InboxView";
 import { SettingsView } from "./components/center/SettingsView";
 import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
+import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
 import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon } from "lucide-solid";
@@ -91,6 +92,39 @@ const App: Component = () => {
   const [entityRefs, setEntityRefs] = createSignal<EntityRef[]>([]);
   // Prose diagnostics per file (spelling/grammar squiggles + Problems panel)
   const [diagMap, setDiagMap] = createStore<Record<string, Diag[]>>({});
+  // Writing statistics + targets
+  const [stats, setStats] = createSignal<ProjectStats | null>(null);
+  const [statsOpen, setStatsOpen] = createSignal(false);
+  const [targets, setTargets] = createSignal<WritingTargets>({ dailyTarget: 500, projectTarget: 80000 });
+
+  const localDate = () => new Date().toLocaleDateString("sv-SE"); // yyyy-mm-dd
+
+  let statsTimer: ReturnType<typeof setTimeout> | undefined;
+  const fetchStats = async () => {
+    try {
+      setStats(await window.chronicler.invoke("stats/get", { today: localDate() }));
+    } catch { /* backend restarting */ }
+  };
+  const fetchStatsDebounced = () => {
+    clearTimeout(statsTimer);
+    statsTimer = setTimeout(fetchStats, 2500);
+  };
+
+  const loadTargets = async () => {
+    try {
+      const res = await window.chronicler.invoke("db/get", { key: "writing" });
+      if (res.value) setTargets(t => ({ ...t, ...JSON.parse(res.value) }));
+    } catch { /* defaults */ }
+  };
+
+  const saveTargets = async (t: WritingTargets) => {
+    setTargets(t);
+    try {
+      await window.chronicler.invoke("db/set", { key: "writing", value: JSON.stringify(t) });
+    } catch (err: any) {
+      setStatus(`Saving targets failed: ${err.message}`);
+    }
+  };
 
   const recheckDiags = async (relPath?: string) => {
     try {
@@ -206,6 +240,7 @@ const App: Component = () => {
         setStatus("Rust Backend Recompiling...");
       } else if (event.method === "project/changed") {
         handleExternalChanges(event.params?.paths ?? []);
+        fetchStatsDebounced();
       } else if (event.method === "diag/updated") {
         for (const [file, diags] of Object.entries(event.params?.files ?? {})) {
           setDiagMap(file, diags as Diag[]);
@@ -242,6 +277,8 @@ const App: Component = () => {
       setFsVersion(v => v + 1);
       setCodexVersion(v => v + 1);
       recheckDiags();
+      loadTargets();
+      fetchStats();
     } catch (err: any) {
       setStatus(`Failed to connect: ${err.message}`);
     }
@@ -656,6 +693,7 @@ const App: Component = () => {
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
+    { id: "stats.open", title: "Writing: Statistics & Targets", run: () => { fetchStats(); setStatsOpen(true); } },
     {
       id: "codex.promoteSelection", title: "Codex: Promote Selection", keybinding: "Mod+Shift+K",
       run: () => {
@@ -975,7 +1013,23 @@ const App: Component = () => {
         <div style={{ display: 'flex', gap: '15px' }}>
           <span>{status()}</span>
         </div>
-        <div style={{ display: 'flex', gap: '15px' }}>
+        <div style={{ display: 'flex', gap: '15px', 'align-items': 'center' }}>
+          <Show when={stats()}>
+            <div
+              onClick={() => { fetchStats(); setStatsOpen(true); }}
+              title="Writing statistics"
+              style={{ display: 'flex', 'align-items': 'center', gap: '7px', cursor: 'pointer' }}
+            >
+              <span>today {stats()!.today.written.toLocaleString()} / {targets().dailyTarget.toLocaleString()}</span>
+              <div style={{ width: '64px', height: '5px', background: 'var(--bg-color)', border: '1px solid var(--border-color)', 'border-radius': '3px', overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.min(100, targets().dailyTarget > 0 ? (Math.max(0, stats()!.today.written) / targets().dailyTarget) * 100 : 0)}%`,
+                  height: '100%',
+                  background: stats()!.today.written >= targets().dailyTarget ? 'var(--entity)' : 'var(--accent)',
+                }} />
+              </div>
+            </div>
+          </Show>
           <span>{activeFile() ? (getFileTab(activeFile()!)?.content ?? "").trim().split(/\s+/).filter(w => w.length > 0).length + " Words" : ""}</span>
           <Show when={activeFile()}><span>Markdown</span></Show>
         </div>
@@ -999,6 +1053,7 @@ const App: Component = () => {
         />
       )}
       <CompileModal onOrderChanged={() => setFsVersion(v => v + 1)} />
+      <StatsModal open={statsOpen()} stats={stats()} targets={targets()} onClose={() => setStatsOpen(false)} onSaveTargets={saveTargets} />
       {welcome() && <WelcomeScreen recents={welcome()!} />}
     </div>
   );
