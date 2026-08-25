@@ -25,14 +25,35 @@ interface CompileConfig {
   sceneSeparator: string;
   customPreamble: string;
   format: "pdf" | "typst" | "markdown";
+  template: string;
   include: Record<string, boolean>;
 }
+
+/** Aesthetic presets; picking one also applies its recommended knob values. */
+const TEMPLATES: { id: string; label: string; presets: Partial<CompileConfig> }[] = [
+  {
+    id: "modern-novel", label: "Modern Novel",
+    presets: { paper: "a5", fontSize: 11, fontFamily: "", lineSpacing: 0.85, justify: true, firstLineIndent: true, sceneSeparator: "* * *" },
+  },
+  {
+    id: "classic-manuscript", label: "Classic Manuscript",
+    presets: { paper: "us-letter", fontSize: 12, fontFamily: "Courier New", lineSpacing: 1.7, justify: false, firstLineIndent: true, sceneSeparator: "#" },
+  },
+  {
+    id: "elegant-book", label: "Elegant Book",
+    presets: { paper: "a5", fontSize: 10.5, fontFamily: "", lineSpacing: 0.95, justify: true, firstLineIndent: true, sceneSeparator: "❦" },
+  },
+  {
+    id: "plain", label: "Plain",
+    presets: { paper: "a4", fontSize: 12, fontFamily: "", lineSpacing: 1, justify: false, firstLineIndent: false, sceneSeparator: "* * *" },
+  },
+];
 
 const DEFAULT_CONFIG: CompileConfig = {
   title: "",
   author: "",
-  paper: "a4",
-  fontSize: 12,
+  paper: "a5",
+  fontSize: 11,
   fontFamily: "",
   lineSpacing: 0.85,
   justify: true,
@@ -43,6 +64,7 @@ const DEFAULT_CONFIG: CompileConfig = {
   sceneSeparator: "* * *",
   customPreamble: "",
   format: "pdf",
+  template: "modern-novel",
   include: {},
 };
 
@@ -97,17 +119,26 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
     })();
   });
 
-  /** Reorder a scene within its chapter folder by rewriting order.json. */
-  const reorderScene = async (chapter: CompileChapter, fromPath: string, toPath: string, before: boolean) => {
-    if (fromPath === toPath) return;
-    // Only scenes directly inside the chapter folder can be reordered here
-    if (parentOf(fromPath) !== chapter.key || parentOf(toPath) !== chapter.key) return;
-
+  const saveOrderEntry = async (dirPath: string, names: string[]) => {
     let order: OrderMap = {};
     try {
       const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
       order = JSON.parse(o.content);
     } catch { /* start fresh */ }
+    order[dirPath] = names;
+    try {
+      await window.chronicler.invoke("project/create_folder", { rel_path: ".chronicler" });
+      await window.chronicler.invoke("document/save", { rel_path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
+    } catch { /* non-fatal */ }
+    await loadChapters();
+    props.onOrderChanged?.();
+  };
+
+  /** Reorder a scene within its chapter folder by rewriting order.json. */
+  const reorderScene = async (chapter: CompileChapter, fromPath: string, toPath: string, before: boolean) => {
+    if (fromPath === toPath) return;
+    // Only scenes directly inside the chapter folder can be reordered here
+    if (parentOf(fromPath) !== chapter.key || parentOf(toPath) !== chapter.key) return;
 
     const names = chapter.scenes
       .filter(s => parentOf(s) === chapter.key)
@@ -117,14 +148,23 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
     if (idx === -1) idx = names.length;
     if (!before) idx += 1;
     names.splice(idx, 0, basename(fromPath));
-    order[chapter.key] = names;
+    await saveOrderEntry(chapter.key, names);
+  };
 
-    try {
-      await window.chronicler.invoke("project/create_folder", { rel_path: ".chronicler" });
-      await window.chronicler.invoke("document/save", { rel_path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
-    } catch { /* non-fatal */ }
-    await loadChapters();
-    props.onOrderChanged?.();
+  /** Reorder chapters (root-level entries) by rewriting order.json's root list. */
+  const reorderChapter = async (fromKey: string, toKey: string, before: boolean) => {
+    if (fromKey === toKey) return;
+    const names = chapters().map(c => basename(c.key)).filter(n => n !== basename(fromKey));
+    let idx = names.indexOf(basename(toKey));
+    if (idx === -1) idx = names.length;
+    if (!before) idx += 1;
+    names.splice(idx, 0, basename(fromKey));
+    await saveOrderEntry("", names);
+  };
+
+  const dropHalf = (e: DragEvent) => {
+    const el = e.currentTarget as HTMLElement;
+    return e.clientY - el.getBoundingClientRect().top < el.getBoundingClientRect().height / 2;
   };
 
   const included = (key: string) => config.include[key] !== false; // default: included
@@ -133,7 +173,10 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
     window.chronicler.invoke("db/set", { key: "compile", value: JSON.stringify({ ...config, include: { ...config.include } }) });
 
   const compile = async () => {
-    const selected = chapters().filter(c => included(c.key));
+    const selected = chapters()
+      .filter(c => included(c.key))
+      .map(c => ({ ...c, scenes: c.scenes.filter(s => s === c.key || included(s)) }))
+      .filter(c => c.scenes.length > 0);
     if (selected.length === 0) {
       setResult({ ok: false, message: "No chapters selected." });
       return;
@@ -200,7 +243,25 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
                 <For each={chapters()}>
                   {(chapter, i) => (
                     <div>
-                      <label style={{ display: "flex", "align-items": "center", gap: "8px", padding: "6px 15px", cursor: "pointer", "font-size": "13px", color: included(chapter.key) ? "var(--text-main)" : "var(--text-faint)" }}>
+                      <label
+                        draggable={true}
+                        onDragStart={(e) => e.dataTransfer?.setData("chronicler/chapter", chapter.key)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          const el = e.currentTarget;
+                          el.style.boxShadow = dropHalf(e) ? "inset 0 2px 0 var(--accent)" : "inset 0 -2px 0 var(--accent)";
+                        }}
+                        onDragLeave={(e) => { e.currentTarget.style.boxShadow = ""; }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const before = dropHalf(e);
+                          e.currentTarget.style.boxShadow = "";
+                          const from = e.dataTransfer?.getData("chronicler/chapter");
+                          if (from) reorderChapter(from, chapter.key, before);
+                        }}
+                        style={{ display: "flex", "align-items": "center", gap: "8px", padding: "6px 15px 6px 8px", cursor: "pointer", "font-size": "13px", color: included(chapter.key) ? "var(--text-main)" : "var(--text-faint)" }}
+                      >
+                        <GripVertical size={12} style={{ opacity: 0.4, cursor: "grab", "flex-shrink": 0 }} />
                         <input
                           type="checkbox"
                           checked={included(chapter.key)}
@@ -243,12 +304,21 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
                                 style={{
                                   display: "flex", "align-items": "center", gap: "6px",
                                   padding: "3px 15px 3px 38px", "font-size": "12px",
-                                  color: "var(--text-muted)", cursor: draggable ? "grab" : "default",
+                                  color: included(scene) ? "var(--text-muted)" : "var(--text-faint)",
+                                  cursor: draggable ? "grab" : "default",
+                                  "text-decoration": included(scene) ? "none" : "line-through",
                                 }}
                                 onMouseEnter={(e) => { if (draggable) e.currentTarget.style.backgroundColor = "var(--hover-bg)"; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                               >
                                 <GripVertical size={11} style={{ opacity: draggable ? 0.5 : 0.15, "flex-shrink": 0 }} />
+                                <input
+                                  type="checkbox"
+                                  checked={included(scene)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => setConfig("include", scene, e.currentTarget.checked)}
+                                  style={{ transform: "scale(0.85)" }}
+                                />
                                 <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
                                   {chapterName(basename(scene))}
                                 </span>
@@ -268,6 +338,25 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
 
             {/* Settings */}
             <div style={{ flex: 1, "overflow-y": "auto", padding: "15px 20px" }}>
+              <div style={{ "margin-bottom": "14px" }}>
+                <label style={labelStyle}>Template</label>
+                <select
+                  style={inputStyle}
+                  value={config.template}
+                  onChange={(e) => {
+                    const t = TEMPLATES.find(t => t.id === e.currentTarget.value);
+                    if (t) setConfig({ template: t.id, ...t.presets });
+                  }}
+                >
+                  <For each={TEMPLATES}>
+                    {(t) => <option value={t.id}>{t.label}</option>}
+                  </For>
+                </select>
+                <div style={{ "font-size": "11px", color: "var(--text-faint)", "margin-top": "5px" }}>
+                  Picking a template applies its recommended settings below — tweak freely after.
+                </div>
+              </div>
+
               <div style={{ display: "grid", "grid-template-columns": "1fr 1fr", gap: "14px" }}>
                 <div>
                   <label style={labelStyle}>Title</label>

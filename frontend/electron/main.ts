@@ -259,15 +259,20 @@ function startBackend(projectPath?: string) {
 function watchRustBackend() {
   if (app.isPackaged) return;
   import("chokidar").then(({ watch }) => {
-    const watcher = watch(path.join(__dirname, "../../backend/src/**/*.rs"), {
+    // chokidar v4+ dropped glob support: watch the directory and filter
+    const watcher = watch(path.join(__dirname, "../../backend/src"), {
       ignoreInitial: true,
     });
-    watcher.on("all", () => {
+    let restartTimer: NodeJS.Timeout | undefined;
+    watcher.on("all", (_event, file) => {
+      if (!file.endsWith(".rs")) return;
       // Only restart if a project is actually open (not on the welcome screen)
       if (!currentProjectPath) return;
-      startBackend();
-      // Optionally notify frontend that backend is recompiling
-      mainWindow?.webContents.send("backend-event", { method: "system/recompiling" });
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => {
+        startBackend();
+        mainWindow?.webContents.send("backend-event", { method: "system/recompiling" });
+      }, 300);
     });
   });
 }

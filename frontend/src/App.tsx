@@ -54,6 +54,16 @@ const App: Component = () => {
   const tabIndex = (filename: string) => tabs.findIndex(t => t.filename === filename);
   const getTab = (filename: string) => tabs.find(t => t.filename === filename);
 
+  // Tabs show the basename; add the parent folder only when two open files
+  // share a name (VS Code-style disambiguation).
+  const tabLabel = (filename: string) => {
+    const base = filename.split("/").pop()!;
+    const ambiguous = tabs.some(t => t.filename !== filename && t.filename.split("/").pop() === base);
+    if (!ambiguous) return base;
+    const parent = filename.split("/").slice(-2, -1)[0];
+    return parent ? `${base} — ${parent}` : base;
+  };
+
   // Live editor handles, for external reloads and search jumps
   const editorApis = new Map<string, EditorApi>();
 
@@ -594,9 +604,10 @@ const App: Component = () => {
                         onClick={() => setActiveTab(tab.filename)}
                         onAuxClick={(e) => { if (e.button === 1) closeTab(tab.filename, e); }}
                         onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, filename: tab.filename }); }}
-                        style={{ cursor: 'pointer', display: 'flex', 'align-items': 'center', gap: '8px' }}
+                        style={{ cursor: 'pointer', display: 'flex', 'align-items': 'center', gap: '8px', 'flex-shrink': 0 }}
+                        title={tab.filename}
                       >
-                        <span>{tab.filename}</span>
+                        <span style={{ 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis', 'max-width': '160px' }}>{tabLabel(tab.filename)}</span>
                         <div
                           onClick={(e) => closeTab(tab.filename, e)}
                           style={{ display: 'flex', 'align-items': 'center', opacity: 0.7 }}
