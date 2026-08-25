@@ -835,6 +835,7 @@ dependencies = [
  "rig-agent",
  "rig-core",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "spellbook",

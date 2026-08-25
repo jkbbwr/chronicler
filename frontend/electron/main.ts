@@ -334,11 +334,19 @@ function createWindow() {
   mainWindow.webContents.on("context-menu", (_event, params) => {
     const menu = new Menu();
     const selection = params.selectionText.trim();
+    if (selection) {
+      menu.append(new MenuItem({
+        label: "Ask Agent About Selection",
+        click: () => mainWindow?.webContents.send("menu-action", "ask-agent-selection"),
+      }));
+    }
     if (selection && selection.length <= 80) {
       menu.append(new MenuItem({
         label: `Promote “${selection.length > 30 ? selection.slice(0, 30) + "…" : selection}” to Codex`,
         click: () => mainWindow?.webContents.send("menu-action", `codex-promote:${selection}`),
       }));
+    }
+    if (selection) {
       menu.append(new MenuItem({ type: "separator" }));
     }
     for (const suggestion of params.dictionarySuggestions) {

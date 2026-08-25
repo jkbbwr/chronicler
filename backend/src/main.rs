@@ -496,6 +496,43 @@ async fn handle_request_line(
             let id = req.params["id"].as_i64().unwrap_or(-1);
             agents::dismiss_finding(root, id).map(|_| json!({ "success": true })).map_err(rpc_err)
         }
+        "agents/ledger" => {
+            let force = req.params["force"].as_bool().unwrap_or(false);
+            match agents::ledger_update(root, tx.clone(), force).await {
+                Ok((scenes, facts)) => Ok(json!({ "scenes": scenes, "facts": facts })),
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
+        "agents/facts" => agents::ledger_report(root, req.params["subject"].as_str())
+            .map(|md| json!({ "markdown": md }))
+            .map_err(rpc_err),
+        "agents/synopses" => match agents::draft_synopses(root, tx.clone()).await {
+            Ok(drafted) => Ok(json!({ "drafted": drafted })),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "agents/hygiene" => match agents::hygiene_sweep(root, tx.clone()).await {
+            Ok((suggestions, summary)) => {
+                Ok(json!({ "suggestions": suggestions, "summary": summary }))
+            }
+            Err(e) => Err(rpc_err(e)),
+        },
+        "agents/voice" => {
+            let id = req.params["id"].as_i64().unwrap_or(-1);
+            match agents::voice_report(root, id).await {
+                Ok(markdown) => Ok(json!({ "markdown": markdown })),
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
+        "agents/critique" => {
+            let brief: agents::CritiqueBrief =
+                serde_json::from_value(req.params["brief"].clone()).unwrap_or_default();
+            match agents::critique_run(root, tx.clone(), brief).await {
+                Ok((problems, report)) => {
+                    Ok(json!({ "problems": problems, "markdown": report }))
+                }
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
         "agents/fill" => {
             let id = req.params["id"].as_i64().unwrap_or(-1);
             let field = req.params["field"].as_str().unwrap_or("").to_string();

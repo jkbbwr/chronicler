@@ -371,33 +371,7 @@ impl Tool for ReadScene {
 // ---------- Agent + streaming chat ----------
 
 fn build_agent(root: &Path, preamble: &str) -> Result<Agent> {
-    let cfg = ai::load_config(root);
-    let root_buf = root.to_path_buf();
-    let agent = match provider(root)? {
-        Provider::OpenRouter(client) => {
-            let model = client.completion_model(&cfg.model);
-            AgentBuilder::new(model)
-                .name("rig")
-                .preamble(preamble)
-                .tool(SearchManuscript { root: root_buf.clone() })
-                .tool(GrepManuscript { root: root_buf.clone() })
-                .tool(QueryCodex { root: root_buf.clone() })
-                .tool(ReadScene { root: root_buf })
-                .build()
-        }
-        Provider::Compat(client) => {
-            let model = client.completion_model(&cfg.model);
-            AgentBuilder::new(model)
-                .name("rig")
-                .preamble(preamble)
-                .tool(SearchManuscript { root: root_buf.clone() })
-                .tool(GrepManuscript { root: root_buf.clone() })
-                .tool(QueryCodex { root: root_buf.clone() })
-                .tool(ReadScene { root: root_buf })
-                .build()
-        }
-    };
-    Ok(agent)
+    Ok(with_read_tools(model_builder(root)?.name("rig").preamble(preamble), root).build())
 }
 
 /// A tool-less agent for one-shot jobs (field drafting, codex extraction,
@@ -531,6 +505,230 @@ pub async fn run_chat(
                 bail!("model stream failed: {e}");
             }
         }
+    }
+}
+
+// ---------- Shared job plumbing ----------
+
+fn ensure_not_running(id: &str) -> Result<()> {
+    if running().lock().unwrap().contains_key(id) {
+        bail!("that agent job is already running");
+    }
+    Ok(())
+}
+
+impl RunHandle {
+    /// Non-blocking cancellation check for scene-loop jobs.
+    fn is_cancelled(&mut self) -> bool {
+        matches!(self.cancelled.try_recv(), Ok(()))
+    }
+}
+
+/// Stable content hash (FNV-1a) for change detection across restarts.
+fn content_hash(text: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in text.as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// One-shot with schema-enforced structured output: a tool-less agent with
+/// this preamble, forced through rig's typed output path — no fence
+/// stripping, validation and retries at the model layer.
+pub(crate) async fn one_shot_typed<T>(root: &Path, system: &str, user: &str) -> Result<T>
+where
+    T: schemars::JsonSchema + serde::de::DeserializeOwned + Send + 'static,
+{
+    use rig_agent::completion::TypedPrompt;
+    let agent = build_bare_agent(root, system)?;
+    agent.prompt_typed::<T>(user).await.map_err(|e| anyhow::anyhow!("{}", e))
+}
+
+/// The read-only tool loadout every investigative agent gets.
+fn with_read_tools(
+    builder: AgentBuilder,
+    root: &Path,
+) -> rig_agent::agent::AgentBuilder<rig_agent::agent::WithBuilderTools> {
+    let root = root.to_path_buf();
+    builder
+        .tool(ReadScene { root: root.clone() })
+        .tool(GrepManuscript { root: root.clone() })
+        .tool(SearchManuscript { root: root.clone() })
+        .tool(QueryCodex { root: root.clone() })
+        .tool(QueryFacts { root })
+}
+
+fn model_builder(root: &Path) -> Result<AgentBuilder> {
+    let cfg = ai::load_config(root);
+    Ok(match provider(root)? {
+        Provider::OpenRouter(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
+        Provider::Compat(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
+    })
+}
+
+// ---------- Fact ledger ----------
+
+const EXTRACT_FACTS: &str = "You extract established facts from one scene of a novel for a \
+continuity ledger. Report only what the text explicitly establishes — 5 to 20 facts per scene; \
+skip style and mood.";
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+struct SceneFacts {
+    facts: Vec<Fact>,
+}
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+struct Fact {
+    /// One concrete sentence stating what the text establishes.
+    fact: String,
+    /// physical | timeline | knowledge | object | relationship | other
+    kind: String,
+    /// Names involved.
+    subjects: Vec<String>,
+    /// Story-time marker, when the scene gives one.
+    time: Option<String>,
+}
+
+/// (Re)extract facts for scenes whose content changed. Returns (scenes
+/// updated, total facts stored).
+pub async fn ledger_update(
+    root: &Path,
+    tx: mpsc::Sender<String>,
+    force: bool,
+) -> Result<(usize, usize)> {
+    ensure_not_running("ledger")?;
+    let mut run = RunHandle::register("ledger");
+    let conn = db::open(root)?;
+    let mut updated = 0usize;
+    for rel in crate::list_md_files(root) {
+        if run.is_cancelled() {
+            break;
+        }
+        let Ok(path) = crate::resolve_path(root, &rel) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        if content.split_whitespace().count() < 20 {
+            continue; // stubs establish nothing
+        }
+        let hash = content_hash(&content);
+        let stored: Option<String> = conn
+            .query_row("SELECT hash FROM scene_facts WHERE file = ?1", [rel.as_str()], |r| {
+                r.get(0)
+            })
+            .ok();
+        if !force && stored.as_deref() == Some(hash.as_str()) {
+            continue;
+        }
+        notify(&tx, "agents/sweep", json!({ "note": format!("extracting facts: {}", rel) })).await;
+        let scene: String = content.chars().take(24_000).collect();
+        let extracted: SceneFacts = one_shot_typed(root, EXTRACT_FACTS, &scene).await?;
+        let facts = serde_json::to_value(extracted.facts)?;
+        conn.execute(
+            "INSERT INTO scene_facts (file, hash, facts, extracted) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(file) DO UPDATE SET hash = excluded.hash, facts = excluded.facts,
+             extracted = excluded.extracted",
+            rusqlite::params![rel, hash, facts.to_string(), db::now()],
+        )?;
+        updated += 1;
+    }
+    let total: i64 = conn
+        .query_row("SELECT COALESCE(SUM(json_array_length(facts)), 0) FROM scene_facts", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0);
+    Ok((updated, total as usize))
+}
+
+/// All ledger facts, optionally filtered by subject substring:
+/// [(file, [fact rows])] in binder order.
+pub fn ledger_facts(root: &Path, subject: Option<&str>) -> Result<Vec<(String, Vec<Value>)>> {
+    let conn = db::open(root)?;
+    let mut stmt = conn.prepare("SELECT file, facts FROM scene_facts ORDER BY file")?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let needle = subject.map(str::to_lowercase);
+    let mut out = Vec::new();
+    for (file, raw) in rows {
+        let facts: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+        let kept: Vec<Value> = facts
+            .into_iter()
+            .filter(|f| match &needle {
+                None => true,
+                Some(n) => {
+                    f["fact"].as_str().is_some_and(|s| s.to_lowercase().contains(n))
+                        || f["subjects"].as_array().is_some_and(|subs| {
+                            subs.iter()
+                                .any(|s| s.as_str().is_some_and(|s| s.to_lowercase().contains(n)))
+                        })
+                }
+            })
+            .collect();
+        if !kept.is_empty() {
+            out.push((file, kept));
+        }
+    }
+    Ok(out)
+}
+
+/// The ledger as a markdown report with scene links.
+pub fn ledger_report(root: &Path, subject: Option<&str>) -> Result<String> {
+    let groups = ledger_facts(root, subject)?;
+    if groups.is_empty() {
+        return Ok("No facts extracted yet — run **Agent: Update Fact Ledger** first.".into());
+    }
+    let mut md = match subject {
+        Some(s) => format!("# Facts: {s}\n"),
+        None => "# What the manuscript establishes\n".to_string(),
+    };
+    for (file, facts) in groups {
+        md.push_str(&format!("\n## [{}](<scene://{}>)\n", file, file));
+        for f in facts {
+            let kind = f["kind"].as_str().unwrap_or("other");
+            let time = f["time"].as_str().map(|t| format!(" _({t})_")).unwrap_or_default();
+            md.push_str(&format!("- **{}** {}{}\n", kind, f["fact"].as_str().unwrap_or(""), time));
+        }
+    }
+    Ok(md)
+}
+
+struct QueryFacts {
+    root: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct FactsArgs {
+    subject: Option<String>,
+}
+
+impl Tool for QueryFacts {
+    const NAME: &'static str = "query_facts";
+    type Args = FactsArgs;
+    type Output = Value;
+    type Error = ToolFail;
+
+    fn description(&self) -> String {
+        "The continuity ledger: facts each scene establishes (physical, timeline, knowledge, \
+         object, relationship), pre-extracted. Filter by subject (name or keyword) or omit for \
+         everything. Much cheaper than re-reading scenes."
+            .into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "subject": { "type": "string", "description": "Name or keyword to filter by (optional)" }
+            }
+        })
+    }
+
+    async fn call(&self, _ctx: &mut ToolContext, args: Self::Args) -> Result<Value, ToolFail> {
+        let groups = ledger_facts(&self.root, args.subject.as_deref()).map_err(fail)?;
+        Ok(json!({
+            "scenes": groups.iter().map(|(file, facts)| json!({ "file": file, "facts": facts })).collect::<Vec<_>>(),
+        }))
     }
 }
 
@@ -729,11 +927,12 @@ fn sweep_preamble(root: &Path, files: &[String]) -> String {
         "You are the continuity editor for a novel, working inside the writer's IDE. Your job is \
          to find CONTRADICTIONS — not style, not taste, not deliberate mystery.\n\n\
          Scenes in reading order:\n{scenes}\n\nWorld bible:\n{codex_lines}\n\n\
-         Method: call read_scene on each scene in order. Track what the text establishes — \
-         physical details, timeline, who knows what and when, where objects are. When a later \
-         passage contradicts something established earlier, verify with grep_manuscript or \
-         search_manuscript, then call report_finding with a verbatim quote from the LATER \
-         (contradicting) passage and evidence quotes from where the fact was established.\n\n\
+         Method: start with query_facts — the pre-extracted ledger of what each scene \
+         establishes — then call read_scene on each scene in order. Track physical details, \
+         timeline, who knows what and when, where objects are. When a later passage contradicts \
+         something established earlier, verify with grep_manuscript or search_manuscript, then \
+         call report_finding with a verbatim quote from the LATER (contradicting) passage and \
+         evidence quotes from where the fact was established.\n\n\
          Report only defensible contradictions a careful reader would flag. Ambiguity, \
          intentional unreliability, and things a revision might intend are not findings. \
          When you have read every scene, reply with a one-paragraph summary of the sweep."
@@ -764,21 +963,10 @@ pub async fn run_continuity(
     }
     clear_findings(root, scope)?;
 
-    let cfg = ai::load_config(root);
-    let root_buf = root.to_path_buf();
     let preamble = sweep_preamble(root, &files);
-    let agent = match provider(root)? {
-        Provider::OpenRouter(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
-        Provider::Compat(client) => AgentBuilder::new(client.completion_model(&cfg.model)),
-    }
-    .name("continuity")
-    .preamble(&preamble)
-    .tool(ReadScene { root: root_buf.clone() })
-    .tool(GrepManuscript { root: root_buf.clone() })
-    .tool(SearchManuscript { root: root_buf.clone() })
-    .tool(QueryCodex { root: root_buf.clone() })
-    .tool(ReportFinding { root: root_buf, tx: tx.clone() })
-    .build();
+    let agent = with_read_tools(model_builder(root)?.name("continuity").preamble(&preamble), root)
+        .tool(ReportFinding { root: root.to_path_buf(), tx: tx.clone() })
+        .build();
 
     let mut run = RunHandle::register(SWEEP_RUN_ID);
     let max_turns = (files.len() * 3 + 12).min(80);
@@ -816,6 +1004,297 @@ pub async fn run_continuity(
             }
         }
     }
+}
+
+// ---------- Synopsis drafting (index cards) ----------
+
+const SYNOPSIS_SYSTEM: &str = "You write index-card synopses for a novelist's own scenes. \
+2-3 sentences, present tense, concrete: who does what, what changes, what it sets up. \
+The writer knows their book — no praise, no hedging. Output only the synopsis.";
+
+/// Draft synopses for scenes that don't have one. Returns scenes drafted.
+pub async fn draft_synopses(root: &Path, tx: mpsc::Sender<String>) -> Result<usize> {
+    ensure_not_running("synopses")?;
+    let mut run = RunHandle::register("synopses");
+    let conn = db::open(root)?;
+    let mut drafted = 0usize;
+    for rel in crate::list_md_files(root) {
+        if run.is_cancelled() {
+            break;
+        }
+        let existing: Option<String> = conn
+            .query_row("SELECT synopsis FROM scene_meta WHERE file = ?1", [rel.as_str()], |r| {
+                r.get(0)
+            })
+            .ok();
+        if existing.is_some_and(|s| !s.trim().is_empty()) {
+            continue;
+        }
+        let Ok(path) = crate::resolve_path(root, &rel) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        if content.split_whitespace().count() < 30 {
+            continue;
+        }
+        notify(&tx, "agents/sweep", json!({ "note": format!("drafting synopsis: {}", rel) })).await;
+        let scene: String = content.chars().take(24_000).collect();
+        let synopsis = one_shot(root, SYNOPSIS_SYSTEM, &scene).await?;
+        conn.execute(
+            "INSERT INTO scene_meta (file, synopsis, status) VALUES (?1, ?2, '')
+             ON CONFLICT(file) DO UPDATE SET synopsis = excluded.synopsis",
+            rusqlite::params![rel, synopsis.trim()],
+        )?;
+        drafted += 1;
+    }
+    Ok(drafted)
+}
+
+// ---------- Codex hygiene sweep ----------
+
+struct SuggestCodexChange {
+    root: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct HygieneArgs {
+    name: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    summary: String,
+    reason: String,
+    alias_of: Option<String>,
+}
+
+impl Tool for SuggestCodexChange {
+    const NAME: &'static str = "suggest_codex_change";
+    type Args = HygieneArgs;
+    type Output = Value;
+    type Error = ToolFail;
+
+    fn description(&self) -> String {
+        "File one codex housekeeping suggestion for the writer's inbox: a missing entity \
+         (name + kind + summary), or a nickname/variant of an existing entry (set alias_of to \
+         the existing entity's exact name — it is applied immediately). Always give the reason."
+            .into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "kind": { "type": "string", "enum": ["character", "place", "item", "faction", "creature", "event", "lore", ""] },
+                "summary": { "type": "string", "description": "One sentence for a new entity" },
+                "reason": { "type": "string", "description": "Why this belongs in the codex" },
+                "alias_of": { "type": "string", "description": "Existing entity this name is a variant of" }
+            },
+            "required": ["name", "reason"]
+        })
+    }
+
+    async fn call(&self, _ctx: &mut ToolContext, args: Self::Args) -> Result<Value, ToolFail> {
+        if let Some(target) = &args.alias_of {
+            let all = codex::list_entities(&self.root).map_err(fail)?;
+            let id = all["entities"].as_array().and_then(|es| {
+                es.iter()
+                    .find(|e| e["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(target)))
+                    .and_then(|e| e["id"].as_i64())
+            });
+            if let Some(id) = id {
+                codex::add_alias(&self.root, id, &args.name).map_err(fail)?;
+                codex::reindex_mentions(&self.root, None).map_err(fail)?;
+                return Ok(json!({ "appliedAlias": true }));
+            }
+        }
+        let kind = if codex::KINDS.contains(&args.kind.as_str()) { args.kind } else { String::new() };
+        let new = codex::record_candidates(
+            &self.root,
+            "(hygiene)",
+            &[codex::Candidate {
+                name: args.name,
+                kind_guess: kind,
+                source: "hygiene".into(),
+                summary: args.summary,
+                context: args.reason,
+                line: 0,
+            }],
+        )
+        .map_err(fail)?;
+        Ok(json!({ "queued": new > 0 }))
+    }
+}
+
+/// Review the codex against the manuscript; suggestions land in the
+/// Discovered inbox (aliases apply directly). Returns suggestion count.
+pub async fn hygiene_sweep(root: &Path, tx: mpsc::Sender<String>) -> Result<(usize, String)> {
+    use futures::StreamExt;
+    use MultiTurnStreamItem as Item;
+    use StreamedAssistantContent as Content;
+
+    ensure_not_running("hygiene")?;
+    let preamble = "You are auditing the world bible (codex) of a novel against its manuscript. \
+        Find: (1) recurring proper nouns with no codex entry — check query_codex, verify with \
+        grep_manuscript; (2) nicknames/variants of existing entries not listed as aliases; \
+        (3) entries whose summary contradicts what the manuscript now establishes (query_facts \
+        helps). File each finding with suggest_codex_change. Be conservative: only names that \
+        recur or matter. Finish with a one-paragraph summary.";
+    let agent = with_read_tools(model_builder(root)?.name("hygiene").preamble(preamble), root)
+        .tool(SuggestCodexChange { root: root.to_path_buf() })
+        .build();
+
+    let mut run = RunHandle::register("hygiene");
+    let mut stream =
+        agent.stream_chat(Message::user("Begin the audit."), Vec::<Message>::new()).max_turns(40).await;
+    let mut summary = String::new();
+    let mut suggestions = 0usize;
+    loop {
+        let item = tokio::select! {
+            _ = &mut run.cancelled => return Ok((suggestions, summary)),
+            item = stream.next() => match item {
+                Some(item) => item,
+                None => return Ok((suggestions, summary)),
+            },
+        };
+        match item {
+            Ok(Item::StreamAssistantItem(Content::Text(t))) => summary.push_str(&t.text),
+            Ok(Item::ToolExecutionCommitted { tool_call, .. }) => {
+                if tool_call.function.name == SuggestCodexChange::NAME {
+                    suggestions += 1;
+                }
+                notify(&tx, "agents/sweep", json!({ "note": format!("codex audit: {} suggestion(s)", suggestions) })).await;
+            }
+            Ok(_) => {}
+            Err(e) => bail!("hygiene sweep failed: {e}"),
+        }
+    }
+}
+
+// ---------- Character voice report ----------
+
+/// A markdown report on how one character sounds across the manuscript.
+pub async fn voice_report(root: &Path, entity_id: i64) -> Result<String> {
+    let all = codex::list_entities(root)?;
+    let entity = all["entities"]
+        .as_array()
+        .and_then(|es| es.iter().find(|e| e["id"].as_i64() == Some(entity_id)).cloned())
+        .context("entity not found")?;
+    let name = entity["name"].as_str().unwrap_or("").to_string();
+    let aliases: Vec<String> = entity["aliases"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let preamble = format!(
+        "You are analysing how the character \"{}\"{} sounds in the writer's own novel. Use \
+         grep_manuscript on the name and aliases to find their scenes, then read_scene for full \
+         dialogue context. Produce a markdown report: **How {} sounds** (register, rhythm, verbal \
+         tics with quoted examples), **Signature moves**, **Drift** (scenes where the voice slips, \
+         each cited as [Scene](<scene://path#L<line>>) with the off-sounding line quoted), and \
+         **One-line voice guide** the writer could pin up. Quote the text generously; never invent \
+         lines.",
+        name,
+        if aliases.is_empty() { String::new() } else { format!(" (aliases: {})", aliases.join(", ")) },
+        name
+    );
+    let agent = with_read_tools(model_builder(root)?.name("voice").preamble(&preamble), root).build();
+    let report = agent
+        .prompt(format!("Analyse {}'s voice across the manuscript.", name))
+        .max_turns(24)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(report)
+}
+
+// ---------- Reading critique ----------
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CritiqueBrief {
+    pub audience: String,
+    pub tone: String,
+    pub similar_authors: String,
+    pub style: String,
+    pub notes: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct SceneCritique {
+    /// 3-5 sentences on how the scene reads for this audience — pace,
+    /// clarity, tone match, where attention flags.
+    notes: String,
+    /// 0-4 genuine stumbling blocks; not preferences.
+    problems: Vec<CritiqueProblem>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct CritiqueProblem {
+    /// Verbatim text (under 150 chars) where a reader stumbles.
+    quote: String,
+    /// What goes wrong for this audience, concretely.
+    message: String,
+}
+
+fn critique_system(brief: &CritiqueBrief) -> String {
+    format!(
+        "You are a close reader critiquing one scene of a novel draft for readability, on the \
+         writer's own brief:\n\
+         - Target audience: {}\n- Intended tone: {}\n- Comparable authors: {}\n- Style goals: {}\n\
+         - Writer's notes: {}\n\n\
+         Judge the scene against THAT brief, not your taste. Report only genuine stumbling \
+         blocks a reader from that audience would hit, with each quote copied verbatim from the \
+         scene.",
+        brief.audience, brief.tone, brief.similar_authors, brief.style, brief.notes
+    )
+}
+
+/// Scene-by-scene readability critique against the writer's brief. Problems
+/// land as assistant findings (kind "critique"); returns (problem count,
+/// markdown report).
+pub async fn critique_run(
+    root: &Path,
+    tx: mpsc::Sender<String>,
+    brief: CritiqueBrief,
+) -> Result<(usize, String)> {
+    ensure_not_running("critique")?;
+    let mut run = RunHandle::register("critique");
+    {
+        let conn = db::open(root)?;
+        conn.execute("DELETE FROM assistant_findings WHERE kind = 'critique'", [])?;
+    }
+    let system = critique_system(&brief);
+    let mut problems = 0usize;
+    let mut report = String::from("# Reading critique\n");
+    for rel in crate::list_md_files(root) {
+        if run.is_cancelled() {
+            report.push_str("\n_(stopped here)_\n");
+            break;
+        }
+        let Ok(path) = crate::resolve_path(root, &rel) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        if content.split_whitespace().count() < 30 {
+            continue;
+        }
+        notify(&tx, "agents/sweep", json!({ "note": format!("critiquing {}", rel) })).await;
+        let scene: String = content.chars().take(24_000).collect();
+        let critique: SceneCritique = one_shot_typed(root, &system, &scene).await?;
+
+        report.push_str(&format!("\n## [{}](<scene://{}>)\n", rel, rel));
+        report.push_str(&critique.notes);
+        report.push('\n');
+        let conn = db::open(root)?;
+        for p in &critique.problems {
+            let line = locate_quote(&content, &p.quote).map(|(l, _, _)| l).unwrap_or(1);
+            conn.execute(
+                "INSERT INTO assistant_findings (file, line, quote, kind, message, created)
+                 VALUES (?1, ?2, ?3, 'critique', ?4, ?5)",
+                rusqlite::params![rel, line as i64, p.quote, p.message, db::now()],
+            )?;
+            problems += 1;
+            notify(&tx, "agents/finding", json!({ "file": rel })).await;
+        }
+    }
+    report.push_str(&format!("\n---\n{} reader stumbling block(s) marked in the manuscript.\n", problems));
+    Ok((problems, report))
 }
 
 // ---------- Field filling (codex "draft from manuscript") ----------

@@ -153,13 +153,27 @@ pub async fn test_connection(root: &Path) -> Result<String> {
         .await
 }
 
-const EXTRACTION_INSTRUCTION: &str = "You are an entity extractor for a fiction writer's world bible. \
-From the scene text, extract entities of these kinds: character, place, item, faction, creature, event, lore. \
-Only include entities NOT present in the known-entities list. If a name in the text is clearly a nickname or \
-variant of a known entity, report it with \"aliasOf\" set to that known entity's exact name instead of a kind. \
-Respond with ONLY a JSON array, no prose, no code fences: \
-[{\"name\": \"...\", \"kind\": \"character\", \"summary\": \"one sentence\"}, {\"name\": \"...\", \"aliasOf\": \"Known Name\"}]. \
-Return [] if there is nothing new.";
+const EXTRACTION_INSTRUCTION: &str = "You are an entity extractor for a fiction writer's world \
+bible. From the scene text, extract entities of these kinds: character, place, item, faction, \
+creature, event, lore. Only include entities NOT present in the known-entities list. If a name in \
+the text is clearly a nickname or variant of a known entity, set alias_of to that known entity's \
+exact name instead of a kind. Return nothing when there is nothing new.";
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct Extraction {
+    entities: Vec<ExtractedEntity>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ExtractedEntity {
+    name: String,
+    /// character | place | item | faction | creature | event | lore. Omit when alias_of is set.
+    kind: Option<String>,
+    /// One sentence.
+    summary: Option<String>,
+    /// Exact name of the known entity this is a nickname or variant of.
+    alias_of: Option<String>,
+}
 
 fn build_prompt(content: &str, known: &[String]) -> String {
     let text: String = content.chars().take(24_000).collect();
@@ -168,20 +182,6 @@ fn build_prompt(content: &str, known: &[String]) -> String {
         if known.is_empty() { "(none)".to_string() } else { known.join(", ") },
         text
     )
-}
-
-/// Strip code fences and parse the extraction JSON array.
-fn parse_extraction(text: &str) -> Result<Vec<Value>> {
-    let trimmed = text.trim();
-    let trimmed = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed);
-    let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed).trim();
-    let start = trimmed.find('[').context("no JSON array in model response")?;
-    let end = trimmed.rfind(']').context("unterminated JSON array in model response")?;
-    let arr: Value = serde_json::from_str(&trimmed[start..=end]).context("parsing extraction JSON")?;
-    Ok(arr.as_array().cloned().unwrap_or_default())
 }
 
 /// LLM-extract entities from one file into the candidates inbox.
@@ -205,28 +205,33 @@ pub async fn scan_file(root: &Path, rel: &str) -> Result<(usize, usize)> {
         })
         .unwrap_or_default();
 
-    let text =
-        crate::agents::one_shot(root, EXTRACTION_INSTRUCTION, &build_prompt(&content, &known))
-            .await?;
-    let extracted = parse_extraction(&text)?;
+    let extraction: Extraction = crate::agents::one_shot_typed(
+        root,
+        EXTRACTION_INSTRUCTION,
+        &build_prompt(&content, &known),
+    )
+    .await?;
 
     let mut aliases_added = 0;
     let mut found = Vec::new();
-    for item in &extracted {
-        let Some(name) = item["name"].as_str().filter(|n| !n.trim().is_empty()) else { continue };
-        if let Some(alias_of) = item["aliasOf"].as_str() {
+    for item in extraction.entities {
+        let name = item.name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(alias_of) = &item.alias_of {
             if let Some(&id) = by_name.get(&alias_of.to_lowercase()) {
-                codex::add_alias(root, id, name)?;
+                codex::add_alias(root, id, &name)?;
                 aliases_added += 1;
                 continue;
             }
         }
-        let kind = item["kind"].as_str().unwrap_or("");
+        let kind = item.kind.unwrap_or_default();
         found.push(codex::Candidate {
-            name: name.trim().to_string(),
-            kind_guess: if codex::KINDS.contains(&kind) { kind.to_string() } else { String::new() },
+            name,
+            kind_guess: if codex::KINDS.contains(&kind.as_str()) { kind } else { String::new() },
             source: "llm".into(),
-            summary: item["summary"].as_str().unwrap_or("").to_string(),
+            summary: item.summary.unwrap_or_default(),
             context: String::new(),
             line: 0,
         });

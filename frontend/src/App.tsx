@@ -4,7 +4,9 @@ import { workbench, setWorkbench, updateSettings, type EditorMode } from "./stor
 import { EditorView, type EditorApi } from "./components/editor/EditorView";
 import { type EntityRef } from "./components/editor/entityLinks";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
-import { AgentView, handleRigEvent } from "./components/sidebar/AgentView";
+import { AgentView, handleRigEvent, seedComposer } from "./components/sidebar/AgentView";
+import { CritiqueModal, type CritiqueBrief } from "./components/CritiqueModal";
+import { parseSceneHref, renderMarkdown } from "./lib/markdown";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
 import { OutlinerView } from "./components/sidebar/OutlinerView";
@@ -29,7 +31,7 @@ import "./App.css";
 
 // Center tabs are typed: files edit prose; entity sheets, the Discovered
 // inbox, and Settings are first-class tabs too (panels browse, center edits).
-export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards";
+export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards" | "report";
 
 interface TabState {
   kind: TabKind;
@@ -329,7 +331,7 @@ const App: Component = () => {
         // A continuity finding just landed for this scene — refresh its diags
         if (event.params?.file) recheckDiags(event.params.file);
       } else if (event.method === "agents/sweep") {
-        setStatus(`Continuity sweep: ${event.params?.note ?? "working"}`);
+        setStatus(`Agent: ${event.params?.note ?? "working"}`);
       } else if (typeof event.method === "string" && event.method.startsWith("agents/")) {
         handleRigEvent(event.method, event.params ?? {});
       } else if (event.method === "codex/changed") {
@@ -517,7 +519,40 @@ const App: Component = () => {
     }
   };
 
+  const [critiqueOpen, setCritiqueOpen] = createSignal(false);
+  const runCritique = async (brief: CritiqueBrief) => {
+    setCritiqueOpen(false);
+    setStatus("Agent: reviewing the book against your brief...");
+    try {
+      const res = await window.chronicler.invoke("agents/critique", { brief });
+      openReportTab("critique", "Reading Critique", res.markdown);
+      setStatus(`Reading critique done: ${res.problems} stumbling block(s) marked`);
+      if (res.problems > 0) setWorkbench("panels", "bottom", "visible", true);
+    } catch (err: any) {
+      setStatus(`Reading critique failed: ${err.message}`);
+    } finally {
+      recheckDiags();
+    }
+  };
+
+  const askAgentAboutSelection = () => {
+    const file = activeFile();
+    const selection = file ? editorApis.get(file)?.getSelection().trim() : "";
+    if (!selection) {
+      setStatus("Select some prose first");
+      return;
+    }
+    setWorkbench("panels", "right", "visible", true);
+    setWorkbench("panels", "right", "activeView", "agent");
+    const quoted = selection.split("\n").map(l => `> ${l}`).join("\n");
+    seedComposer(`${quoted}\n\n`);
+  };
+
   const handleMenuCommand = (action: string) => {
+    if (action === "ask-agent-selection") {
+      askAgentAboutSelection();
+      return;
+    }
     if (action === "new-chapter" || action === "new-file") {
       triggerCreate("file");
     } else if (action === "new-folder") {
@@ -585,6 +620,11 @@ const App: Component = () => {
 
   const openInboxTab = () => pushTab({ kind: "inbox", id: "inbox", title: "Discovered" });
   const openCardsTab = () => pushTab({ kind: "cards", id: "cards", title: "Index Cards" });
+  const openReportTab = (key: string, title: string, markdown: string) => {
+    const id = `report:${key}`;
+    removeTabs(t => t.id === id); // fresh content replaces the old report
+    pushTab({ kind: "report", id, title, content: markdown });
+  };
   const openSettingsTab = () => pushTab({ kind: "settings", id: "settings", title: "Settings" });
 
   // `restoreContent` carries hot-exit journal content: when it differs from
@@ -801,6 +841,49 @@ const App: Component = () => {
     { id: "rig.open", title: "Agent: Open Panel", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
     { id: "agent.continuity", title: "Agent: Check Continuity", run: runContinuity },
     {
+      id: "agent.ledger", title: "Agent: Update Fact Ledger",
+      run: async () => {
+        setStatus("Agent: updating the fact ledger...");
+        try {
+          const res = await window.chronicler.invoke("agents/ledger", {});
+          setStatus(`Fact ledger: ${res.scenes} scene(s) re-read, ${res.facts} facts on file`);
+        } catch (err: any) { setStatus(`Ledger update failed: ${err.message}`); }
+      },
+    },
+    {
+      id: "agent.facts", title: "Agent: Show Fact Ledger",
+      run: async () => {
+        try {
+          const res = await window.chronicler.invoke("agents/facts", {});
+          openReportTab("facts", "Fact Ledger", res.markdown);
+        } catch (err: any) { setStatus(`Facts failed: ${err.message}`); }
+      },
+    },
+    {
+      id: "agent.synopses", title: "Agent: Draft Missing Synopses",
+      run: async () => {
+        setStatus("Agent: drafting synopses for scenes without one...");
+        try {
+          const res = await window.chronicler.invoke("agents/synopses", {});
+          setMetaVersion(v => v + 1);
+          setStatus(`Drafted ${res.drafted} synopsis(es) — see Index Cards`);
+        } catch (err: any) { setStatus(`Synopsis drafting failed: ${err.message}`); }
+      },
+    },
+    {
+      id: "agent.hygiene", title: "Agent: Codex Hygiene Audit",
+      run: async () => {
+        setStatus("Agent: auditing the codex against the manuscript...");
+        try {
+          const res = await window.chronicler.invoke("agents/hygiene", {});
+          setCodexVersion(v => v + 1);
+          setStatus(`Codex audit: ${res.suggestions} suggestion(s) in the Discovered inbox`);
+        } catch (err: any) { setStatus(`Codex audit failed: ${err.message}`); }
+      },
+    },
+    { id: "agent.critique", title: "Agent: Reading Critique...", run: () => setCritiqueOpen(true) },
+    { id: "agent.askSelection", title: "Agent: Ask About Selection", keybinding: "Mod+Shift+Q", run: askAgentAboutSelection },
+    {
       id: "agent.index", title: "Agent: Index Manuscript",
       run: async () => {
         setStatus("Agent: indexing manuscript...");
@@ -909,6 +992,7 @@ const App: Component = () => {
     if (t.kind === "entity") return `Codex › ${t.title}`;
     if (t.kind === "inbox") return "Codex › Discovered";
     if (t.kind === "cards") return "Index Cards";
+    if (t.kind === "report") return t.title;
     return "Settings";
   };
 
@@ -1070,6 +1154,16 @@ const App: Component = () => {
                         onOpenFile={openSearchResult}
                         onStatus={setStatus}
                         onDeleted={() => { removeTabs(t => t.id === tab.id); setCodexVersion(v => v + 1); }}
+                        onVoiceReport={async (id, name) => {
+                          setStatus(`Agent: analysing ${name}'s voice...`);
+                          try {
+                            const res = await window.chronicler.invoke("agents/voice", { id });
+                            openReportTab(`voice:${id}`, `Voice: ${name}`, res.markdown);
+                            setStatus(`Voice report ready for ${name}`);
+                          } catch (err: any) {
+                            setStatus(`Voice report failed: ${err.message}`);
+                          }
+                        }}
                       />
                     )}
                     {tab.kind === "inbox" && (
@@ -1083,6 +1177,26 @@ const App: Component = () => {
                       />
                     )}
                     {tab.kind === "settings" && <SettingsView onStatus={setStatus} />}
+                    {tab.kind === "report" && (
+                      <div style={{ height: "100%", "overflow-y": "auto" }}>
+                        <div
+                          class="agent-md"
+                          style={{ "max-width": "760px", margin: "0 auto", padding: "36px 40px", "font-size": "13.5px" }}
+                          innerHTML={renderMarkdown(tab.content ?? "")}
+                          onClick={(e) => {
+                            const a = (e.target as HTMLElement).closest("a");
+                            if (!a) return;
+                            e.preventDefault();
+                            const scene = parseSceneHref(a.getAttribute("href") ?? "");
+                            if (scene) {
+                              openTab(scene.path).then(() => {
+                                if (scene.line) setTimeout(() => editorApis.get(scene.path)?.revealLine(scene.line!), 60);
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    )}
                     {tab.kind === "cards" && (
                       <IndexCardsView
                         refreshVersion={fsVersion()}
@@ -1244,6 +1358,9 @@ const App: Component = () => {
         />
       )}
       <CompileModal onOrderChanged={() => setFsVersion(v => v + 1)} />
+      <Show when={critiqueOpen()}>
+        <CritiqueModal onRun={runCritique} onClose={() => setCritiqueOpen(false)} />
+      </Show>
       <StatsModal open={statsOpen()} stats={stats()} targets={targets()} onClose={() => setStatsOpen(false)} onSaveTargets={saveTargets} />
       {welcome() && <WelcomeScreen recents={welcome()!} />}
     </div>

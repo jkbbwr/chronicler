@@ -25,6 +25,7 @@ harper-core = "2.8.0"
 rig-core = "0.42.0"
 rig-agent = "0.42.0"
 futures = "0.3.34"
+schemars = { version = "1", features = ["derive"] }
 
 # harper's curated dictionary decode is unbearably slow unoptimized; keep
 # these crates optimized even in dev builds so engine warm-up stays fast.

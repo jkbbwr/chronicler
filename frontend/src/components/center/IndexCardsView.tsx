@@ -1,4 +1,4 @@
-import { type Component, createResource, For, Show } from "solid-js";
+import { type Component, createResource, createSignal, For, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import {
   buildTree,
@@ -41,7 +41,7 @@ const sceneName = (path: string) => chapterName(path.split("/").pop()!.replace(/
 export const IndexCardsView: Component<IndexCardsProps> = (props) => {
   const [meta, setMeta] = createStore<Record<string, SceneMeta>>({});
 
-  const [chapters] = createResource(
+  const [chapters, { refetch }] = createResource(
     () => props.refreshVersion,
     async () => {
       try {
@@ -82,8 +82,33 @@ export const IndexCardsView: Component<IndexCardsProps> = (props) => {
     }, debounce));
   };
 
+  const [drafting, setDrafting] = createSignal(false);
+  const draftMissing = async () => {
+    setDrafting(true);
+    props.onStatus("Agent: drafting synopses for scenes without one...");
+    try {
+      const res = await window.chronicler.invoke("agents/synopses", {});
+      props.onStatus(`Drafted ${res.drafted} synopsis(es)`);
+      props.onMetaChanged();
+    } catch (err: any) {
+      props.onStatus(`Synopsis drafting failed: ${err.message}`);
+    } finally {
+      setDrafting(false);
+      refetch();
+    }
+  };
+
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "24px 32px" }}>
+      <div style={{ display: "flex", "justify-content": "flex-end", "margin-bottom": "12px" }}>
+        <button
+          onClick={draftMissing} disabled={drafting()}
+          title="The agent writes a synopsis for every card that has none"
+          style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "12px", opacity: drafting() ? 0.6 : 1 }}
+        >
+          {drafting() ? "Drafting…" : "Draft missing synopses"}
+        </button>
+      </div>
       <Show when={(chapters() ?? []).length === 0}>
         <div style={{ color: "var(--text-faint)", "font-size": "13px" }}>No scenes yet.</div>
       </Show>

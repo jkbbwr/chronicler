@@ -12,6 +12,8 @@ interface EntitySheetProps {
   onOpenFile: (file: string, line: number) => void;
   onStatus: (message: string) => void;
   onDeleted: () => void;
+  /** Run the agent's voice analysis for this character. */
+  onVoiceReport: (id: number, name: string) => void;
   refreshVersion: number;
 }
 
@@ -134,6 +136,15 @@ export const EntitySheet: Component<EntitySheetProps> = (props) => {
                 onChange={(ev) => save({ name: ev.currentTarget.value })}
               />
               <span style={{ "font-size": "12px", color: "var(--accent)", "min-width": "48px" }}>{saved()}</span>
+              <Show when={e().kind === "character"}>
+                <button
+                  onClick={() => props.onVoiceReport(props.entityId, e().name)}
+                  title="Agent voice report — how this character sounds across the manuscript"
+                  style={{ padding: "5px 12px", background: "transparent", border: "1px solid var(--border-color)", color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "12px", "flex-shrink": 0 }}
+                >
+                  Voice report
+                </button>
+              </Show>
               <Trash2 size={16} style={{ cursor: "pointer", color: "var(--text-faint)", "flex-shrink": 0 }} onClick={remove} />
             </div>
 

@@ -1,4 +1,4 @@
-import { type Component, createSignal, For, onMount, Show } from "solid-js";
+import { type Component, createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { Send, Square, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
 import { parseSceneHref, renderMarkdown } from "../../lib/markdown";
@@ -27,6 +27,10 @@ const [thread, setThread] = createStore<{ msgs: ChatMsg[]; runId: string | null 
 });
 
 let onThreadUpdate: (() => void) | null = null;
+
+// "Ask about selection": text queued from outside lands in the composer.
+const [composerSeed, setComposerSeed] = createSignal<string | null>(null);
+export const seedComposer = (text: string) => setComposerSeed(text);
 
 // ---- Persistence: the thread survives restarts, per project (db KV) ----
 let loadedFor: string | null = null;
@@ -112,9 +116,25 @@ export const AgentView: Component<AgentViewProps> = (props) => {
       setRagStatus(await window.chronicler.invoke("agents/status"));
     } catch { /* backend restarting */ }
   };
+  let composerRef: HTMLTextAreaElement | undefined;
+
   onMount(() => {
     refreshRag();
     loadThread();
+  });
+
+  createEffect(() => {
+    const seed = composerSeed();
+    if (seed !== null) {
+      setDraft(seed);
+      setComposerSeed(null);
+      queueMicrotask(() => {
+        if (composerRef) {
+          composerRef.focus();
+          composerRef.setSelectionRange(composerRef.value.length, composerRef.value.length);
+        }
+      });
+    }
   });
 
   const runIndex = async () => {
@@ -296,6 +316,7 @@ export const AgentView: Component<AgentViewProps> = (props) => {
         </Show>
 
         <textarea
+          ref={composerRef}
           value={draft()}
           onInput={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={onKey}
