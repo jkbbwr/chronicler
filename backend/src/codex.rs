@@ -278,7 +278,10 @@ pub fn record_candidates(root: &Path, file: &str, found: &[Candidate]) -> Result
                     files.push(file.to_string());
                 }
                 let mut contexts: Vec<Value> = serde_json::from_str(&contexts).unwrap_or_default();
-                let dup = contexts.iter().any(|v| v["text"] == c.context.as_str() || *v == Value::String(c.context.clone()));
+                // Drop legacy text-only contexts (no location): rescans replace
+                // them with locatable {file, line, text} entries.
+                contexts.retain(|v| v.is_object());
+                let dup = contexts.iter().any(|v| v["text"] == c.context.as_str());
                 if contexts.len() < 3 && !c.context.is_empty() && !dup {
                     contexts.push(json!({ "file": file, "line": c.line, "text": c.context }));
                 }
