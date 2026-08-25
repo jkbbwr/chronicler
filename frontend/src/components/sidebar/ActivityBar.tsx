@@ -1,7 +1,7 @@
 import { type Component, For } from "solid-js";
 import { workbench, setActiveView, togglePanel } from "../../stores/workbench";
 import { runCommand } from "../../commands";
-import { Folder, ListTree, Search, History, Settings } from "lucide-solid";
+import { BookOpenCheck, Folder, ListTree, Search, History, Settings } from "lucide-solid";
 
 export const ActivityBar: Component = () => {
   const views = [
@@ -9,6 +9,7 @@ export const ActivityBar: Component = () => {
     { id: "outliner", icon: ListTree, tooltip: "Outline" },
     { id: "search", icon: Search, tooltip: "Search" },
     { id: "history", icon: History, tooltip: "Snapshots" },
+    { id: "critique", icon: BookOpenCheck, tooltip: "Reading Critique" },
   ];
 
   const handleIconClick = (viewId: any) => {

@@ -1,5 +1,7 @@
 import { type Component, createResource, createSignal, For, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import { Maximize2, Minimize2 } from "lucide-solid";
+import { workbench, setWorkbench } from "../../stores/workbench";
 import {
   buildTree,
   buildCompileChapters,
@@ -100,7 +102,14 @@ export const IndexCardsView: Component<IndexCardsProps> = (props) => {
 
   return (
     <div style={{ height: "100%", "overflow-y": "auto", padding: "24px 32px" }}>
-      <div style={{ display: "flex", "justify-content": "flex-end", "margin-bottom": "12px" }}>
+      <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-bottom": "12px" }}>
+        <button
+          onClick={() => setWorkbench("zenMode", (z) => !z)}
+          title={workbench.zenMode ? "Exit full screen" : "Full screen"}
+          style={{ display: "flex", "align-items": "center", "justify-content": "center", width: "29px", padding: 0, background: "transparent", border: "1px solid var(--border-color)", "border-radius": "6px", color: "var(--text-muted)", cursor: "pointer" }}
+        >
+          {workbench.zenMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </button>
         <button
           onClick={draftMissing} disabled={drafting()}
           title="The agent writes a synopsis for every card that has none"

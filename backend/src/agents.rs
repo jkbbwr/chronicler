@@ -1264,6 +1264,7 @@ pub async fn critique_run(
     let system = critique_system(&brief);
     let mut problems = 0usize;
     let mut report = String::from("# Reading critique\n");
+    let mut per_scene: Vec<Value> = Vec::new();
     for rel in crate::list_md_files(root) {
         if run.is_cancelled() {
             report.push_str("\n_(stopped here)_\n");
@@ -1281,6 +1282,11 @@ pub async fn critique_run(
         report.push_str(&format!("\n## [{}](<scene://{}>)\n", rel, rel));
         report.push_str(&critique.notes);
         report.push('\n');
+        per_scene.push(json!({
+            "file": rel,
+            "notes": critique.notes,
+            "problems": critique.problems.len(),
+        }));
         let conn = db::open(root)?;
         for p in &critique.problems {
             let line = locate_quote(&content, &p.quote).map(|(l, _, _)| l).unwrap_or(1);
@@ -1294,6 +1300,13 @@ pub async fn critique_run(
         }
     }
     report.push_str(&format!("\n---\n{} reader stumbling block(s) marked in the manuscript.\n", problems));
+    // Persist so the critique panel survives restarts
+    db::set_setting(
+        root,
+        "critiqueResults",
+        &json!({ "ranAt": db::now(), "problems": problems, "scenes": per_scene }).to_string(),
+    )?;
+    db::set_setting(root, "critiqueReport", &report)?;
     Ok((problems, report))
 }
 

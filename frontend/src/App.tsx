@@ -6,6 +6,7 @@ import { type EntityRef } from "./components/editor/entityLinks";
 import { MarkdownPreview } from "./components/editor/MarkdownPreview";
 import { AgentView, handleRigEvent, seedComposer } from "./components/sidebar/AgentView";
 import { CritiqueModal, type CritiqueBrief } from "./components/CritiqueModal";
+import { CritiqueView } from "./components/sidebar/CritiqueView";
 import { parseSceneHref, renderMarkdown } from "./lib/markdown";
 import { BinderView } from "./components/sidebar/BinderView";
 import { SearchView } from "./components/sidebar/SearchView";
@@ -25,7 +26,7 @@ import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
 import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
-import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2 } from "lucide-solid";
+import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2, Maximize2, Minimize2 } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
@@ -520,12 +521,25 @@ const App: Component = () => {
   };
 
   const [critiqueOpen, setCritiqueOpen] = createSignal(false);
+  const [critiqueVersion, setCritiqueVersion] = createSignal(0);
+  const openCritiqueReport = async () => {
+    try {
+      const res = await window.chronicler.invoke("db/get", { key: "critiqueReport" });
+      if (res.value) openReportTab("critique", "Reading Critique", res.value);
+      else setStatus("No critique report yet — run the wizard first");
+    } catch (err: any) {
+      setStatus(`Report failed: ${err.message}`);
+    }
+  };
   const runCritique = async (brief: CritiqueBrief) => {
     setCritiqueOpen(false);
     setStatus("Agent: reviewing the book against your brief...");
     try {
       const res = await window.chronicler.invoke("agents/critique", { brief });
       openReportTab("critique", "Reading Critique", res.markdown);
+      setCritiqueVersion(v => v + 1);
+      setWorkbench("panels", "left", "visible", true);
+      setWorkbench("panels", "left", "activeView", "critique");
       setStatus(`Reading critique done: ${res.problems} stumbling block(s) marked`);
       if (res.problems > 0) setWorkbench("panels", "bottom", "visible", true);
     } catch (err: any) {
@@ -1011,7 +1025,7 @@ const App: Component = () => {
             <>
               <div class="panel panel-left" style={{ width: `${workbench.panels.left.size}px`, display: 'flex', 'flex-direction': 'column' }}>
                 <div class="panel-header" style={{ 'min-height': '35px' }}>
-                  <span>{{ binder: "Binder", outliner: "Outline", search: "Search", history: "History" }[workbench.panels.left.activeView as string] ?? workbench.panels.left.activeView}</span>
+                  <span>{{ binder: "Binder", outliner: "Outline", search: "Search", history: "History", critique: "Critique" }[workbench.panels.left.activeView as string] ?? workbench.panels.left.activeView}</span>
                 </div>
                 <div class="panel-content" style={{ padding: 0, flex: 1 }}>
                   {workbench.panels.left.activeView === "binder" && (
@@ -1037,6 +1051,14 @@ const App: Component = () => {
                   )}
                   {workbench.panels.left.activeView === "history" && (
                     <HistoryView activeFile={activeFile()} onStatus={setStatus} />
+                  )}
+                  {workbench.panels.left.activeView === "critique" && (
+                    <CritiqueView
+                      refreshVersion={critiqueVersion()}
+                      onOpenScene={openTab}
+                      onOpenReport={openCritiqueReport}
+                      onRunWizard={() => setCritiqueOpen(true)}
+                    />
                   )}
                 </div>
                 <div style={{ padding: "5px 10px", "font-size": "11px", color: "var(--accent)", "border-top": "1px solid var(--border-color)" }}>
@@ -1178,7 +1200,14 @@ const App: Component = () => {
                     )}
                     {tab.kind === "settings" && <SettingsView onStatus={setStatus} />}
                     {tab.kind === "report" && (
-                      <div style={{ height: "100%", "overflow-y": "auto" }}>
+                      <div style={{ height: "100%", "overflow-y": "auto", position: "relative" }}>
+                        <button
+                          onClick={() => setWorkbench("zenMode", z => !z)}
+                          title={workbench.zenMode ? "Exit full screen" : "Full screen"}
+                          style={{ position: "absolute", top: "14px", right: "18px", "z-index": 5, display: "flex", "align-items": "center", "justify-content": "center", width: "28px", height: "28px", padding: 0, background: "var(--panel-bg)", border: "1px solid var(--border-color)", "border-radius": "6px", color: "var(--text-muted)", cursor: "pointer" }}
+                        >
+                          {workbench.zenMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                        </button>
                         <div
                           class="agent-md"
                           style={{ "max-width": "760px", margin: "0 auto", padding: "36px 40px", "font-size": "13.5px" }}
