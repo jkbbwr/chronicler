@@ -1,5 +1,5 @@
-import { type Component, For, Show } from "solid-js";
-import { FolderOpen, FilePlus } from "lucide-solid";
+import { type Component, createSignal, For, Show } from "solid-js";
+import { FolderOpen, FilePlus, X } from "lucide-solid";
 
 interface RecentProject {
   path: string;
@@ -15,6 +15,13 @@ const basename = (p: string) => p.split("/").pop() || p;
 const shortenHome = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 export const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
+  const [recents, setRecents] = createSignal(props.recents);
+
+  const removeRecent = async (e: MouseEvent, path: string) => {
+    e.stopPropagation();
+    setRecents(await window.chronicler.removeRecent(path));
+  };
+
   return (
     <div style={{
       position: "fixed",
@@ -77,7 +84,7 @@ export const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
           </div>
         </div>
 
-        <Show when={props.recents.length > 0}>
+        <Show when={recents().length > 0}>
           <div style={{ "min-width": "320px", "max-width": "400px" }}>
             <div style={{
               "font-size": "11px", "font-weight": 600, "text-transform": "uppercase",
@@ -85,25 +92,41 @@ export const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
             }}>
               Recent Projects
             </div>
-            <For each={props.recents}>
+            <For each={recents()}>
               {(project) => (
                 <div
+                  class="recent-project-row"
                   onClick={() => window.chronicler.openProject(project.path)}
                   style={{
                     padding: "10px 12px", cursor: "pointer",
                     "border-radius": "6px", "margin-bottom": "4px",
+                    display: "flex", "align-items": "center", gap: "8px",
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--hover-bg)"}
                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
                 >
-                  <div style={{ color: "var(--text-main)", "font-size": "13px", "font-weight": 500 }}>
-                    {basename(project.path)}
+                  <div style={{ flex: 1, "min-width": 0 }}>
+                    <div style={{ color: "var(--text-main)", "font-size": "13px", "font-weight": 500 }}>
+                      {basename(project.path)}
+                    </div>
+                    <div style={{
+                      color: "var(--text-faint)", "font-size": "11px", "margin-top": "2px",
+                      "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis",
+                    }}>
+                      {shortenHome(project.path)}
+                    </div>
                   </div>
-                  <div style={{
-                    color: "var(--text-faint)", "font-size": "11px", "margin-top": "2px",
-                    "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis",
-                  }}>
-                    {shortenHome(project.path)}
+                  <div
+                    title="Remove from Recent Projects"
+                    onClick={(e) => removeRecent(e, project.path)}
+                    style={{
+                      display: "flex", "align-items": "center", padding: "4px",
+                      color: "var(--text-faint)", "border-radius": "4px", "flex-shrink": 0,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-main)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-faint)"; }}
+                  >
+                    <X size={14} />
                   </div>
                 </div>
               )}

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("chronicler", {
   getProject: () => ipcRenderer.invoke("get-project"),
   openProject: (path?: string) => ipcRenderer.invoke("open-project", path),
   createProject: () => ipcRenderer.invoke("create-project"),
+  removeRecent: (path: string) => ipcRenderer.invoke("remove-recent", path),
   onEvent: (callback: (event: any) => void) => {
     ipcRenderer.on("backend-event", (_event, data) => callback(data));
   },

@@ -15,6 +15,7 @@ declare global {
       getProject(): Promise<{ path: string | null; recents: { path: string; openedAt: string }[] }>;
       openProject(path?: string): Promise<void>;
       createProject(): Promise<void>;
+      removeRecent(path: string): Promise<{ path: string; openedAt: string }[]>;
       onEvent(callback: (event: any) => void): void;
       onMenuAction(callback: (action: string) => void): void;
     };

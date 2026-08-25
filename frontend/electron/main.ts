@@ -65,6 +65,7 @@ function openProject(projectPath: string) {
   ].slice(0, 10);
   recents.last = projectPath;
   saveRecents(recents);
+  setupMenu(); // keep the Open Recent submenu current
 
   startBackend(projectPath);
   mainWindow?.webContents.send("menu-action", "project-opened");
@@ -96,6 +97,24 @@ async function createProjectFlow() {
 function setupMenu() {
   const isMac = process.platform === 'darwin';
 
+  const recents = loadRecents().projects.filter(p => fs.existsSync(p.path));
+  const recentSubmenu: any[] = recents.length > 0
+    ? [
+        ...recents.map(p => ({
+          label: p.path.replace(/^\/Users\/[^/]+/, "~"),
+          click: () => openProject(p.path),
+        })),
+        { type: 'separator' },
+        {
+          label: 'Clear Recently Opened',
+          click: () => {
+            saveRecents({ last: null, projects: [] });
+            setupMenu();
+          },
+        },
+      ]
+    : [{ label: 'No Recent Projects', enabled: false }];
+
   const template: any = [
     ...(isMac
       ? [{
@@ -114,6 +133,7 @@ function setupMenu() {
       submenu: [
         { label: 'New Project...', click: () => createProjectFlow() },
         { label: 'Open Project...', click: () => openProjectFlow(), accelerator: 'CmdOrCtrl+O' },
+        { label: 'Open Recent', submenu: recentSubmenu },
         { type: 'separator' },
         { label: 'New File', click: () => mainWindow?.webContents.send('menu-action', 'new-file'), accelerator: 'CmdOrCtrl+N' },
         { label: 'New Folder', click: () => mainWindow?.webContents.send('menu-action', 'new-folder'), accelerator: 'CmdOrCtrl+Shift+N' },
@@ -339,6 +359,18 @@ ipcMain.handle("open-project", async (_event, projectPath?: string) => {
 });
 
 ipcMain.handle("create-project", () => createProjectFlow());
+
+ipcMain.handle("remove-recent", (_event, projectPath: string) => {
+  const recents = loadRecents();
+  recents.projects = recents.projects.filter(p => p.path !== projectPath);
+  if (recents.last === projectPath) {
+    // Don't auto-reopen a project the user explicitly removed
+    recents.last = null;
+  }
+  saveRecents(recents);
+  setupMenu();
+  return recents.projects.filter(p => fs.existsSync(p.path));
+});
 
 // Native message boxes (three-way save prompts, destructive confirms, errors)
 ipcMain.handle("show-message-box", async (_event, options: Electron.MessageBoxOptions) => {
