@@ -22,7 +22,7 @@ import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
 import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
-import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid } from "lucide-solid";
+import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2 } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
@@ -58,6 +58,8 @@ interface SessionData {
   // Hot-exit journal: unsaved buffer contents, restored as dirty tabs
   dirty: Record<string, string>;
   panels: Record<"left" | "right" | "bottom", { size: number; visible: boolean }>;
+  /** File shown read-only in the split reference pane, if any. */
+  splitFile?: string | null;
 }
 
 const sessionKey = (root: string) => `chronicler-session:${root}`;
@@ -86,6 +88,13 @@ const App: Component = () => {
   // Bumped when the backend reports filesystem changes; the binder refetches on it
   const [fsVersion, setFsVersion] = createSignal(0);
   const [metaVersion, setMetaVersion] = createSignal(0);
+  // Read-only reference pane: previews an open file tab beside the editor
+  const [splitFile, setSplitFile] = createSignal<string | null>(null);
+  createEffect(() => {
+    // The pane sources content from the open tab; closing that tab closes it
+    const f = splitFile();
+    if (f && !tabs.some(t => t.kind === "file" && t.filename === f)) setSplitFile(null);
+  });
   // Bumped when codex state changes; codex panel + center tabs refetch
   const [codexVersion, setCodexVersion] = createSignal(0);
   // Editor selection awaiting "promote to codex" (with its cursor line)
@@ -362,6 +371,9 @@ const App: Component = () => {
     if (session.activeTab && getTab(session.activeTab)) {
       setActiveTab(session.activeTab);
     }
+    if (session.splitFile && getFileTab(session.splitFile)) {
+      setSplitFile(session.splitFile);
+    }
   };
 
   // Persist the session (open tabs, unsaved contents, panel layout) on every
@@ -397,6 +409,7 @@ const App: Component = () => {
         right: { size: workbench.panels.right.size, visible: workbench.panels.right.visible },
         bottom: { size: workbench.panels.bottom.size, visible: workbench.panels.bottom.visible },
       },
+      splitFile: splitFile(),
     };
     if (!root) return;
     pendingSession = { root, snapshot };
@@ -746,6 +759,15 @@ const App: Component = () => {
     { id: "codex.inbox", title: "Codex: Open Discovered Inbox", run: openInboxTab },
     { id: "view.indexCards", title: "View: Index Cards", keybinding: "Mod+Shift+I", run: openCardsTab },
     {
+      id: "view.splitRight", title: "View: Open to the Side (Reference)", keybinding: "Mod+\\",
+      run: () => {
+        const f = activeFile();
+        if (!f) { setStatus("Open a file tab first"); return; }
+        setSplitFile(splitFile() === f ? null : f);
+      },
+    },
+    { id: "view.splitClose", title: "View: Close Side Reference", hidden: true, run: () => setSplitFile(null) },
+    {
       id: "index.rebuild", title: "Codex: Invalidate & Rebuild Index",
       run: async () => {
         setStatus("Rebuilding index from scratch...");
@@ -878,7 +900,7 @@ const App: Component = () => {
             </>
           )}
 
-          <div class="panel panel-center" style={{ flex: 1, display: 'flex', 'flex-direction': 'column' }}>
+          <div class="panel panel-center" style={{ flex: 1, "min-width": 0, display: 'flex', 'flex-direction': 'column' }}>
             {!workbench.zenMode && (
               <div class="editor-tabs" style={{ display: 'flex', 'overflow-x': 'auto' }}>
                   <For each={tabs}>
@@ -936,7 +958,8 @@ const App: Component = () => {
               </Show>
             </div>
 
-            <div class="editor-content" style={{ padding: 0, flex: 1, position: 'relative' }}>
+            <div class="editor-content" style={{ padding: 0, flex: 1, position: 'relative', display: 'flex', "min-height": 0 }}>
+              <div style={{ flex: 1, "min-width": 0, height: '100%', position: 'relative' }}>
               <Show when={tabs.length === 0}>
                 <div class="empty-state">
                   <div class="empty-state-logo">Chronicler</div>
@@ -1008,6 +1031,23 @@ const App: Component = () => {
                   </div>
                 )}
               </For>
+              </div>
+
+              {/* Read-only reference pane ("open to the side") */}
+              <Show when={splitFile() && getFileTab(splitFile()!)}>
+                <div style={{ width: "1px", background: "var(--border-color)", "flex-shrink": 0 }} />
+                <div style={{ flex: 1, "min-width": 0, height: "100%", display: "flex", "flex-direction": "column" }}>
+                  <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "5px 12px", "border-bottom": "1px solid var(--border-color)", "font-size": "12px", color: "var(--text-muted)", "flex-shrink": 0 }}>
+                    <Columns2 size={12} style={{ opacity: 0.7 }} />
+                    <span style={{ flex: 1, overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis" }}>{splitFile()}</span>
+                    <span style={{ color: "var(--text-faint)", "font-size": "11px" }}>read-only</span>
+                    <X size={13} style={{ cursor: "pointer", "flex-shrink": 0 }} onClick={() => setSplitFile(null)} />
+                  </div>
+                  <div style={{ flex: 1, "min-height": 0, "overflow-y": "auto" }}>
+                    <MarkdownPreview content={getFileTab(splitFile()!)?.content ?? ""} />
+                  </div>
+                </div>
+              </Show>
             </div>
           </div>
 
