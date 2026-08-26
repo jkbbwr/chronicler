@@ -447,3 +447,49 @@ body {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
+
+/* Toolbar icon launchers (breadcrumb row) */
+.toolbar-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.toolbar-icon:hover {
+  color: var(--text-main);
+  background: var(--hover-bg);
+}
+.toolbar-icon.active {
+  color: var(--accent);
+}
+.toolbar-icon .toolbar-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-3px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease 0.25s, transform 0.12s ease 0.25s;
+  z-index: 300;
+}
+.toolbar-icon:hover .toolbar-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

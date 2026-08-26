@@ -1122,20 +1122,41 @@ const App: Component = () => {
               <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
                 <span>Chronicler</span> <ChevronRight size={12} color="var(--text-faint)" /> <span style={{ color: "var(--text-main)" }}>{breadcrumb()}</span>
               </div>
-              <Show when={activeFile()}>
-                <div class="mode-toggle">
-                  <For each={[["code", "Code"], ["preview", "Preview"], ["live", "Live"]] as [EditorMode, string][]}>
-                    {([mode, label]) => (
-                      <button
-                        class={workbench.settings.editorMode === mode ? "active" : ""}
-                        onClick={() => updateSettings({ editorMode: mode })}
-                      >
-                        {label}
-                      </button>
-                    )}
-                  </For>
+              <div style={{ display: "flex", "align-items": "center", gap: "10px" }}>
+                <Show when={activeFile()}>
+                  <div class="mode-toggle">
+                    <For each={[["code", "Code"], ["preview", "Preview"], ["live", "Live"]] as [EditorMode, string][]}>
+                      {([mode, label]) => (
+                        <button
+                          class={workbench.settings.editorMode === mode ? "active" : ""}
+                          onClick={() => updateSettings({ editorMode: mode })}
+                        >
+                          {label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                {/* Always-available launchers for the board views */}
+                <div style={{ display: "flex", gap: "2px" }}>
+                  <button
+                    class="toolbar-icon"
+                    classList={{ active: activeTab() === "cards" }}
+                    onClick={openCardsTab}
+                  >
+                    <LayoutGrid size={14} />
+                    <span class="toolbar-tooltip">Index Cards</span>
+                  </button>
+                  <button
+                    class="toolbar-icon"
+                    classList={{ active: activeTab() === "timeline" }}
+                    onClick={openTimelineTab}
+                  >
+                    <ClockIcon size={14} />
+                    <span class="toolbar-tooltip">Story Timeline</span>
+                  </button>
                 </div>
-              </Show>
+              </div>
             </div>
 
             <div class="editor-content" style={{ padding: 0, flex: 1, position: 'relative', display: 'flex', "min-height": 0 }}>
