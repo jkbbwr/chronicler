@@ -420,3 +420,30 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Activity bar tooltips */
+.activity-icon {
+  position: relative;
+}
+.activity-icon .activity-tooltip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease 0.25s, transform 0.12s ease 0.25s;
+  z-index: 300;
+}
+.activity-icon:hover .activity-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}

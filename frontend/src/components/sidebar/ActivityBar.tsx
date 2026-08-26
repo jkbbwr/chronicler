@@ -5,7 +5,7 @@ import { BookOpenCheck, Folder, ListTree, Search, History, Settings } from "luci
 
 export const ActivityBar: Component = () => {
   const views = [
-    { id: "binder", icon: Folder, tooltip: "Project Binder" },
+    { id: "binder", icon: Folder, tooltip: "Binder" },
     { id: "outliner", icon: ListTree, tooltip: "Outline" },
     { id: "search", icon: Search, tooltip: "Search" },
     { id: "history", icon: History, tooltip: "Snapshots" },
@@ -38,8 +38,8 @@ export const ActivityBar: Component = () => {
             const isActive = () => workbench.panels.left.visible && workbench.panels.left.activeView === view.id;
             return (
               <div
+                class="activity-icon"
                 onClick={() => handleIconClick(view.id)}
-                title={view.tooltip}
                 style={{
                   cursor: "pointer",
                   color: isActive() ? "var(--text-main)" : "var(--text-muted)",
@@ -51,6 +51,7 @@ export const ActivityBar: Component = () => {
                 onMouseLeave={(e) => { if (!isActive()) e.currentTarget.style.color = "var(--text-muted)"; }}
               >
                 <Icon size={20} strokeWidth={1.5} />
+                <span class="activity-tooltip">{view.tooltip}</span>
               </div>
             );
           }}
@@ -59,13 +60,14 @@ export const ActivityBar: Component = () => {
 
       <div style={{ display: "flex", "flex-direction": "column", gap: "15px" }}>
         <div
+          class="activity-icon"
           onClick={() => runCommand("view.settings")}
-          title="Settings"
           style={{ cursor: "pointer", color: "var(--text-muted)", padding: "8px" }}
           onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-main)")}
           onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
         >
           <Settings size={20} strokeWidth={1.5} />
+          <span class="activity-tooltip">Settings</span>
         </div>
       </div>
     </div>
