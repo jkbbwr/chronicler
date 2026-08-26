@@ -98,6 +98,9 @@ fn blob_to_vec(b: &[u8]) -> Vec<f32> {
 pub async fn index_files(root: &Path, files: &[String]) -> Result<usize> {
     let mut written = 0usize;
     for rel in files {
+        if crate::is_matter_path(rel) {
+            continue;
+        }
         {
             let conn = db::open(root)?;
             conn.execute("DELETE FROM embeddings WHERE file = ?1", [rel.as_str()])?;

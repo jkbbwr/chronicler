@@ -89,9 +89,25 @@ const collectScenes = (node: TreeNode): string[] => {
  * depth, in binder order) are its scenes; a root-level file is a standalone
  * single-scene chapter.
  */
+/** Front/Back Matter are prelims and end pages, not chapters. */
+export const isMatterName = (name: string) => {
+  const l = name.toLowerCase();
+  return l === "front matter" || l === "back matter";
+};
+
+/** Scene paths of the matter folders, in binder order. */
+export const buildMatter = (tree: TreeNode[]): { front: string[]; back: string[] } => {
+  const grab = (which: string) => {
+    const node = tree.find(n => n.is_dir && n.name.toLowerCase() === which);
+    return node ? collectScenes(node) : [];
+  };
+  return { front: grab("front matter"), back: grab("back matter") };
+};
+
 export const buildCompileChapters = (tree: TreeNode[]): CompileChapter[] => {
   const chapters: CompileChapter[] = [];
   for (const node of tree) {
+    if (node.is_dir && isMatterName(node.name)) continue;
     if (node.is_dir) {
       const scenes = collectScenes(node);
       if (scenes.length > 0) {

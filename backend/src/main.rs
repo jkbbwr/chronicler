@@ -131,6 +131,14 @@ fn ensure_repo(root: &Path) -> AnyResult<()> {
     Ok(())
 }
 
+/// Front/Back Matter folders hold prelims and end pages: compiled specially,
+/// invisible to the agent pipelines (nobody needs their copyright page
+/// critiqued or embedded).
+pub fn is_matter_path(rel: &str) -> bool {
+    let lower = rel.to_lowercase();
+    lower.starts_with("front matter/") || lower.starts_with("back matter/")
+}
+
 /// Every .md file in the project, as relative paths.
 pub fn list_md_files(root: &Path) -> Vec<String> {
     let mut entries = Vec::new();
@@ -150,6 +158,9 @@ fn discover_files(root: &Path, files: &[String]) -> anyhow::Result<usize> {
     }
     let mut new_total = 0;
     for rel in files {
+        if is_matter_path(rel) {
+            continue;
+        }
         let Ok(path) = resolve_path(root, rel) else { continue };
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
         let spans = ner::extract(&content)?;
@@ -856,6 +867,19 @@ fn compile_run(root: &Path, params: &Value) -> AnyResult<Value> {
         serde_json::from_value(params["settings"].clone()).context("bad compile settings")?;
     let specs: Vec<compile::ChapterSpec> =
         serde_json::from_value(params["chapters"].clone()).context("bad chapter list")?;
+    let read_all = |key: &str| -> AnyResult<Vec<String>> {
+        let mut out = Vec::new();
+        for rel in params[key].as_array().into_iter().flatten() {
+            let Some(rel) = rel.as_str() else { continue };
+            let path = resolve_path(root, rel)?;
+            out.push(
+                std::fs::read_to_string(&path).with_context(|| format!("reading {}", rel))?,
+            );
+        }
+        Ok(out)
+    };
+    let front = read_all("frontMatter")?;
+    let back = read_all("backMatter")?;
     let mut chapters: Vec<(String, Vec<String>)> = Vec::new();
     for spec in specs {
         let mut scenes = Vec::new();
@@ -867,7 +891,7 @@ fn compile_run(root: &Path, params: &Value) -> AnyResult<Value> {
         }
         chapters.push((spec.title, scenes));
     }
-    let output = compile::run(root, chapters, &settings)?;
+    let output = compile::run(root, front, chapters, back, &settings)?;
     Ok(json!({ "output": output.display().to_string() }))
 }
 

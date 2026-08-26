@@ -279,7 +279,12 @@ fn chapter_call(index: usize, title: &str, numbering: bool) -> String {
 /// The default design is a modern minimal novel interior: A5, indent-only
 /// paragraph flow (par spacing = leading, no gaps), understated small-caps
 /// chapter eyebrows over a light title, muted centered scene separators.
-pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -> String {
+pub fn generate_typst(
+    front: &[String],
+    chapters: &[(String, Vec<String>)],
+    back: &[String],
+    s: &CompileSettings,
+) -> String {
     let mut doc = String::new();
 
     let paper = match s.paper.as_str() {
@@ -288,8 +293,10 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
         _ => "a5",
     };
 
-    // Page numbering starts after the title page (which carries none)
-    let page_numbering = if s.title_page { "none" } else { "\"1\"" };
+    // Prelims (title page + front matter) carry no page numbers; the body
+    // restarts at 1 after them.
+    let has_prelims = s.title_page || !front.is_empty();
+    let page_numbering = if has_prelims { "none" } else { "\"1\"" };
     doc.push_str(&format!(
         "#set page(paper: \"{}\", numbering: {}, margin: (x: 2cm, top: 2.2cm, bottom: 2.4cm))\n",
         paper, page_numbering
@@ -340,7 +347,7 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
                 if !author.is_empty() {
                     title_page.push_str(&format!("\n  #v(1.2em)\n  by {}", author));
                 }
-                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+                title_page.push_str("\n]\n");
             }
         }
         "elegant-book" => {
@@ -362,7 +369,7 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
                         author
                     ));
                 }
-                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+                title_page.push_str("\n]\n");
             }
         }
         "plain" => {
@@ -381,7 +388,7 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
                 if !author.is_empty() {
                     title_page.push_str(&format!("\n  #v(1em)\n  {}", author));
                 }
-                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+                title_page.push_str("\n]\n");
             }
         }
         _ => {
@@ -404,7 +411,7 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
                         author
                     ));
                 }
-                title_page.push_str("\n]\n#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+                title_page.push_str("\n]\n");
             }
         }
     }
@@ -420,6 +427,17 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
 
     doc.push_str(&title_page);
 
+    // Front matter: one unnumbered page per file, no chapter headings —
+    // the writer owns the content (copyright, dedication, epigraph, ...).
+    for md in front {
+        doc.push_str("\n#pagebreak(weak: true)\n");
+        doc.push_str(&md_to_typst(md));
+        doc.push('\n');
+    }
+    if has_prelims {
+        doc.push_str("#pagebreak()\n#set page(numbering: \"1\")\n#counter(page).update(1)\n");
+    }
+
     for (i, (title, scenes)) in chapters.iter().enumerate() {
         doc.push('\n');
         doc.push_str(&chapter_call(i + 1, title, s.numbering));
@@ -429,11 +447,23 @@ pub fn generate_typst(chapters: &[(String, Vec<String>)], s: &CompileSettings) -
         doc.push('\n');
     }
 
+    // Back matter: numbered continuation, one page per file
+    for md in back {
+        doc.push_str("\n#pagebreak(weak: true)\n");
+        doc.push_str(&md_to_typst(md));
+        doc.push('\n');
+    }
+
     doc
 }
 
 /// Concatenated-markdown output for the "markdown" format.
-pub fn generate_markdown(chapters: &[(String, Vec<String>)], s: &CompileSettings) -> String {
+pub fn generate_markdown(
+    front: &[String],
+    chapters: &[(String, Vec<String>)],
+    back: &[String],
+    s: &CompileSettings,
+) -> String {
     let mut doc = String::new();
     if !s.title.trim().is_empty() {
         doc.push_str(&format!("# {}\n", s.title.trim()));
@@ -441,6 +471,10 @@ pub fn generate_markdown(chapters: &[(String, Vec<String>)], s: &CompileSettings
             doc.push_str(&format!("\nby {}\n", s.author.trim()));
         }
         doc.push('\n');
+    }
+    for md in front {
+        doc.push_str(&strip_html_comments(md));
+        doc.push_str("\n\n---\n\n");
     }
     for (i, (title, scenes)) in chapters.iter().enumerate() {
         let heading = match (s.numbering, title.trim().is_empty()) {
@@ -453,13 +487,20 @@ pub fn generate_markdown(chapters: &[(String, Vec<String>)], s: &CompileSettings
         doc.push_str(&cleaned.join(&format!("\n\n{}\n\n", s.scene_separator)));
         doc.push('\n');
     }
+    for md in back {
+        doc.push_str("\n---\n\n");
+        doc.push_str(&strip_html_comments(md));
+        doc.push('\n');
+    }
     doc
 }
 
 /// Build the manuscript into `.chronicler/build/` and return the artifact path.
 pub fn run(
     root: &Path,
+    front: Vec<String>,
     chapters: Vec<(String, Vec<String>)>,
+    back: Vec<String>,
     settings: &CompileSettings,
 ) -> Result<PathBuf> {
     let build_dir = root.join(".chronicler").join("build");
@@ -468,19 +509,19 @@ pub fn run(
     match settings.format.as_str() {
         "markdown" => {
             let out = build_dir.join("manuscript.md");
-            std::fs::write(&out, generate_markdown(&chapters, settings)).context("writing markdown")?;
+            std::fs::write(&out, generate_markdown(&front, &chapters, &back, settings)).context("writing markdown")?;
             Ok(out)
         }
         "typst" => {
             let out = build_dir.join("manuscript.typ");
-            std::fs::write(&out, generate_typst(&chapters, settings)).context("writing typst source")?;
+            std::fs::write(&out, generate_typst(&front, &chapters, &back, settings)).context("writing typst source")?;
             Ok(out)
         }
         _ => {
             // pdf (default)
             let typ = build_dir.join("manuscript.typ");
             let pdf = build_dir.join("manuscript.pdf");
-            std::fs::write(&typ, generate_typst(&chapters, settings)).context("writing typst source")?;
+            std::fs::write(&typ, generate_typst(&front, &chapters, &back, settings)).context("writing typst source")?;
             let output = std::process::Command::new("typst")
                 .arg("compile")
                 .arg(&typ)
@@ -546,7 +587,7 @@ mod tests {
         let mut settings = CompileSettings::default();
         settings.title = "The Long Night".into();
         settings.author = "K. Author".into();
-        let doc = generate_typst(&chapters, &settings);
+        let doc = generate_typst(&[], &chapters, &[], &settings);
         assert!(doc.contains("#set page(paper: \"a5\""));
         assert!(doc.contains("#chapter([Chapter 1])[The Gate]"));
         assert!(doc.contains("#chapter(none)[Chapter 2]"));
@@ -554,5 +595,33 @@ mod tests {
         assert!(doc.contains("The Long Night"));
         // Novel flow: paragraph spacing equals leading
         assert!(doc.contains("leading: 0.85em, spacing: 0.85em"));
+    }
+}
+
+#[cfg(test)]
+mod matter_tests {
+    use super::*;
+
+    #[test]
+    fn matter_brackets_the_body() {
+        let settings = CompileSettings::default();
+        let chapters = vec![("The Arrival".to_string(), vec!["Body text here.".to_string()])];
+        let front = vec!["Copyright page.".to_string()];
+        let back = vec!["Acknowledgements page.".to_string()];
+        let doc = generate_typst(&front, &chapters, &back, &settings);
+
+        let copyright = doc.find("Copyright page.").unwrap();
+        let restart = doc.find("#counter(page).update(1)").unwrap();
+        let body = doc.find("Body text here.").unwrap();
+        let ack = doc.find("Acknowledgements page.").unwrap();
+        // front matter before the numbering restart, body after, back last
+        assert!(copyright < restart && restart < body && body < ack);
+
+        // markdown output brackets too
+        let md = generate_markdown(&front, &chapters, &back, &settings);
+        let c = md.find("Copyright page.").unwrap();
+        let b = md.find("Body text here.").unwrap();
+        let a = md.find("Acknowledgements page.").unwrap();
+        assert!(c < b && b < a);
     }
 }

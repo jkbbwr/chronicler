@@ -606,6 +606,9 @@ pub async fn ledger_update(
         if run.is_cancelled() {
             break;
         }
+        if crate::is_matter_path(&rel) {
+            continue;
+        }
         let Ok(path) = crate::resolve_path(root, &rel) else { continue };
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
         if content.split_whitespace().count() < 20 {
@@ -956,7 +959,11 @@ pub async fn run_continuity(
     }
     let files = match scope {
         Some(f) => vec![f.to_string()],
-        None => crate::list_md_files(root),
+        None => {
+            let mut all = crate::list_md_files(root);
+            all.retain(|f| !crate::is_matter_path(f));
+            all
+        }
     };
     if files.is_empty() {
         bail!("no scenes to sweep");

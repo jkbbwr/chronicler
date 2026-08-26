@@ -2,7 +2,7 @@ import { type Component, createEffect, createSignal, For, Show } from "solid-js"
 import { createStore } from "solid-js/store";
 import { X, BookOpen, GripVertical } from "lucide-solid";
 import { workbench, setWorkbench } from "../stores/workbench";
-import { buildTree, buildCompileChapters, chapterName, ORDER_FILE, type CompileChapter, type OrderMap } from "../lib/binderTree";
+import { buildTree, buildCompileChapters, buildMatter, chapterName, ORDER_FILE, type CompileChapter, type OrderMap } from "../lib/binderTree";
 
 interface CompileModalProps {
   /** Called after scene reordering writes order.json, so the binder refetches. */
@@ -86,11 +86,64 @@ const basename = (p: string) => p.split("/").pop()!;
 
 export const CompileModal: Component<CompileModalProps> = (props) => {
   const [chapters, setChapters] = createSignal<CompileChapter[]>([]);
+  const [matter, setMatter] = createSignal<{ front: string[]; back: string[] }>({ front: [], back: [] });
   const [config, setConfig] = createStore<CompileConfig>({ ...DEFAULT_CONFIG });
   const [busy, setBusy] = createSignal(false);
   const [result, setResult] = createSignal<{ ok: boolean; message: string } | null>(null);
 
   const close = () => setWorkbench("isCompileOpen", false);
+
+  const STARTERS: Record<string, { path: string; content: string }> = {
+    "Front Matter": {
+      path: "Front Matter/Copyright.md",
+      content: "Copyright \u00a9 " + new Date().getFullYear() + " Your Name\n\nAll rights reserved. This is a work of fiction. Names, characters, places, and incidents are products of the author's imagination or are used fictitiously.\n",
+    },
+    "Back Matter": {
+      path: "Back Matter/Acknowledgements.md",
+      content: "## Acknowledgements\n\nThank the people who kept you writing.\n",
+    },
+  };
+
+  const createMatter = async (which: "Front Matter" | "Back Matter") => {
+    try {
+      await window.chronicler.invoke("project/create_folder", { rel_path: which });
+      const starter = STARTERS[which];
+      await window.chronicler.invoke("document/save", { rel_path: starter.path, content: starter.content });
+      await loadChapters();
+      props.onOrderChanged?.();
+    } catch (err: any) {
+      setResult({ ok: false, message: `Couldn't create ${which}: ${err.message}` });
+    }
+  };
+
+  const MatterSection: Component<{ label: string; which: "Front Matter" | "Back Matter"; scenes: string[] }> = (mp) => (
+    <div>
+      <div style={{ padding: "10px 15px 2px", display: "flex", "align-items": "center", "font-size": "11px", "font-weight": 600, "text-transform": "uppercase", "letter-spacing": "0.5px", color: "var(--text-muted)" }}>
+        <span style={{ flex: 1 }}>{mp.label}</span>
+        <Show when={mp.scenes.length === 0}>
+          <span onClick={() => createMatter(mp.which)} style={{ color: "var(--accent)", cursor: "pointer", "text-transform": "none", "font-weight": 400 }}>+ add</span>
+        </Show>
+      </div>
+      <Show when={mp.scenes.length === 0}>
+        <div style={{ padding: "2px 15px 6px", "font-size": "11.5px", color: "var(--text-faint)" }}>
+          Pages in a "{mp.which}" folder compile {mp.which === "Front Matter" ? "before chapter one, unnumbered" : "after the last chapter"}.
+        </div>
+      </Show>
+      <For each={mp.scenes}>
+        {(scene) => (
+          <label style={{ display: "flex", "align-items": "center", gap: "6px", padding: "3px 15px 3px 20px", "font-size": "12px", cursor: "pointer", color: included(scene) ? "var(--text-muted)" : "var(--text-faint)", "text-decoration": included(scene) ? "none" : "line-through" }}>
+            <input
+              type="checkbox"
+              checked={included(scene)}
+              onChange={(e) => setConfig("include", scene, e.currentTarget.checked)}
+              style={{ transform: "scale(0.85)" }}
+            />
+            <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>{chapterName(basename(scene))}</span>
+          </label>
+        )}
+      </For>
+    </div>
+  );
 
   const loadChapters = async () => {
     try {
@@ -100,9 +153,12 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
         const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
         order = JSON.parse(o.content);
       } catch { /* no manual order yet */ }
-      setChapters(buildCompileChapters(buildTree(res.files, order)));
+      const tree = buildTree(res.files, order);
+      setChapters(buildCompileChapters(tree));
+      setMatter(buildMatter(tree));
     } catch {
       setChapters([]);
+      setMatter({ front: [], back: [] });
     }
   };
 
@@ -196,6 +252,8 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
       await persist();
       const res = await window.chronicler.invoke("compile/run", {
         chapters: selected.map(c => ({ title: c.title, scenes: c.scenes })),
+        frontMatter: matter().front.filter(included),
+        backMatter: matter().back.filter(included),
         settings: { ...config, include: undefined },
       });
       await window.chronicler.exportCompiled(res.output, dialog.filePath);
@@ -240,6 +298,8 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
                 Contents
               </div>
               <div style={{ "overflow-y": "auto", flex: 1, padding: "0 0 10px" }}>
+                <MatterSection label="Front matter" which="Front Matter" scenes={matter().front} />
+                <div style={{ padding: "8px 15px 2px", "font-size": "11px", "font-weight": 600, "text-transform": "uppercase", "letter-spacing": "0.5px", color: "var(--text-muted)" }}>Chapters</div>
                 <For each={chapters()}>
                   {(chapter, i) => (
                     <div>
@@ -333,6 +393,7 @@ export const CompileModal: Component<CompileModalProps> = (props) => {
                 <Show when={chapters().length === 0}>
                   <div style={{ padding: "10px 15px", color: "var(--text-faint)", "font-size": "12px" }}>No content found</div>
                 </Show>
+                <MatterSection label="Back matter" which="Back Matter" scenes={matter().back} />
               </div>
             </div>
 
