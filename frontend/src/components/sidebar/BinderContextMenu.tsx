@@ -10,6 +10,8 @@ interface BinderContextMenuProps {
   onDelete: (itemName: string) => void;
   onNewFile?: (folderPath: string) => void;
   onNewFolder?: (folderPath: string) => void;
+  /** Scoped continuity sweep for a single scene. */
+  onCheckContinuity?: (file: string) => void;
 }
 
 export const BinderContextMenu: Component<BinderContextMenuProps> = (props) => {
@@ -55,6 +57,16 @@ export const BinderContextMenu: Component<BinderContextMenuProps> = (props) => {
         </>
       )}
       
+      {!props.isDir && props.onCheckContinuity && (
+        <div
+          style={{ padding: "8px 15px", cursor: "pointer", "border-bottom": "1px solid var(--border-color)", "margin-bottom": "4px", "padding-bottom": "8px" }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = "var(--hover-bg)"}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}
+          onClick={e => handleClick(e, () => props.onCheckContinuity!(props.itemName))}
+        >
+          Check Continuity
+        </div>
+      )}
       <div 
         style={{ padding: "8px 15px", cursor: "pointer" }}
         onMouseEnter={e => e.currentTarget.style.backgroundColor = "var(--hover-bg)"}

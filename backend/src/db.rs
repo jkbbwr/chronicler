@@ -21,10 +21,12 @@ pub fn open(root: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Versioned migrations via PRAGMA user_version.
+/// Schema, squashed to a single migration while the app is pre-release.
+/// The version marker stays at 10 so databases created by earlier dev
+/// builds skip cleanly; bump it (and add a new block) for future changes.
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version < 2 {
+    if version < 10 {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS entities (
                  id      INTEGER PRIMARY KEY,
@@ -49,33 +51,13 @@ fn migrate(conn: &Connection) -> Result<()> {
                  files      TEXT NOT NULL DEFAULT '[]',
                  contexts   TEXT NOT NULL DEFAULT '[]',
                  source     TEXT NOT NULL DEFAULT 'ner',
+                 summary    TEXT NOT NULL DEFAULT '',
                  updated    INTEGER NOT NULL
              );
              CREATE TABLE IF NOT EXISTS dismissed (
                  name TEXT PRIMARY KEY
              );
-             PRAGMA user_version = 2;",
-        )?;
-    }
-    if version < 3 {
-        // Idempotent: a kill between ALTER and the version bump must not
-        // leave the db permanently unopenable.
-        let has_summary: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('candidates') WHERE name = 'summary'",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .map(|n| n > 0)
-            .unwrap_or(false);
-        if !has_summary {
-            conn.execute_batch("ALTER TABLE candidates ADD COLUMN summary TEXT NOT NULL DEFAULT ''")?;
-        }
-        conn.execute_batch("PRAGMA user_version = 3")?;
-    }
-    if version < 4 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS dictionary (
+             CREATE TABLE IF NOT EXISTS dictionary (
                  word TEXT PRIMARY KEY
              );
              CREATE TABLE IF NOT EXISTS suppressions (
@@ -84,32 +66,17 @@ fn migrate(conn: &Connection) -> Result<()> {
                  text    TEXT NOT NULL,
                  PRIMARY KEY (rule_id, file, text)
              );
-             PRAGMA user_version = 4;",
-        )?;
-    }
-    if version < 5 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS writing_days (
+             CREATE TABLE IF NOT EXISTS writing_days (
                  date   TEXT PRIMARY KEY,
                  start  INTEGER NOT NULL,
                  latest INTEGER NOT NULL
              );
-             PRAGMA user_version = 5;",
-        )?;
-    }
-    if version < 6 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS scene_meta (
+             CREATE TABLE IF NOT EXISTS scene_meta (
                  file     TEXT PRIMARY KEY,
                  synopsis TEXT NOT NULL DEFAULT '',
                  status   TEXT NOT NULL DEFAULT ''
              );
-             PRAGMA user_version = 6;",
-        )?;
-    }
-    if version < 7 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS embeddings (
+             CREATE TABLE IF NOT EXISTS embeddings (
                  file       TEXT NOT NULL,
                  chunk      INTEGER NOT NULL,
                  start_line INTEGER NOT NULL,
@@ -118,12 +85,7 @@ fn migrate(conn: &Connection) -> Result<()> {
                  vector     BLOB NOT NULL,
                  PRIMARY KEY (file, chunk)
              );
-             PRAGMA user_version = 7;",
-        )?;
-    }
-    if version < 8 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS assistant_findings (
+             CREATE TABLE IF NOT EXISTS assistant_findings (
                  id      INTEGER PRIMARY KEY,
                  file    TEXT NOT NULL,
                  line    INTEGER NOT NULL,
@@ -132,18 +94,21 @@ fn migrate(conn: &Connection) -> Result<()> {
                  message TEXT NOT NULL,
                  created INTEGER NOT NULL
              );
-             PRAGMA user_version = 8;",
-        )?;
-    }
-    if version < 9 {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS scene_facts (
+             CREATE TABLE IF NOT EXISTS scene_facts (
                  file      TEXT PRIMARY KEY,
                  hash      TEXT NOT NULL,
                  facts     TEXT NOT NULL,
                  extracted INTEGER NOT NULL
              );
-             PRAGMA user_version = 9;",
+             CREATE TABLE IF NOT EXISTS relations (
+                 id      INTEGER PRIMARY KEY,
+                 from_id INTEGER NOT NULL,
+                 to_id   INTEGER NOT NULL,
+                 label   TEXT NOT NULL,
+                 source  TEXT NOT NULL DEFAULT 'human',
+                 created INTEGER NOT NULL
+             );
+             PRAGMA user_version = 10;",
         )?;
     }
     Ok(())

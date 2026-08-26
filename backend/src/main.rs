@@ -454,6 +454,25 @@ async fn handle_request_line(
         "codex/suggest" => codex_suggest(root, &req.params).map_err(rpc_err),
         "codex/reindex" => codex_reindex(root).map_err(rpc_err),
         "index/rebuild" => index_rebuild(root).map_err(rpc_err),
+        "codex/graph" => codex::graph(root).map_err(rpc_err),
+        "relations/add" => {
+            let from = req.params["from"].as_i64().unwrap_or(-1);
+            let to = req.params["to"].as_i64().unwrap_or(-1);
+            match param(&req.params, "label") {
+                Ok(label) => codex::relation_add(root, from, to, label, "human")
+                    .map(|id| json!({ "id": id }))
+                    .map_err(rpc_err),
+                Err(e) => Err(rpc_err(e)),
+            }
+        }
+        "relations/delete" => {
+            let id = req.params["id"].as_i64().unwrap_or(-1);
+            codex::relation_delete(root, id).map(|_| json!({ "success": true })).map_err(rpc_err)
+        }
+        "agents/relations_build" => match agents::relations_build(root).await {
+            Ok(links) => Ok(json!({ "links": links })),
+            Err(e) => Err(rpc_err(e)),
+        },
         "agents/chat" => {
             let id = req.params["id"].as_str().unwrap_or("rig").to_string();
             let messages = req.params["messages"].as_array().cloned().unwrap_or_default();

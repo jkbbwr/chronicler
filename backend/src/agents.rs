@@ -1058,6 +1058,81 @@ pub fn timeline_get(root: &Path) -> Result<Value> {
         .unwrap_or(Value::Null))
 }
 
+// ---------- Relationship derivation ----------
+
+const RELATIONS_SYSTEM: &str = "You map relationships between the entities of a novel's world \
+bible, using the fact ledger and entity notes. Report only relationships the text supports: \
+kinship, allegiance, employment, rivalry, ownership, location ties (\"guards\", \"built on\", \
+\"haunts\"). Labels are short and directional, read as: FROM --label--> TO (e.g. \"captain of\", \
+\"distrusts\", \"sealed behind\"). Use exact entity names from the list. 3-25 relations.";
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+struct DerivedRelations {
+    relations: Vec<DerivedRelation>,
+}
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+struct DerivedRelation {
+    /// Exact entity name the relation points from.
+    from: String,
+    /// Exact entity name the relation points to.
+    to: String,
+    /// Short directional label, e.g. "captain of", "sealed behind".
+    label: String,
+}
+
+/// Derive typed relations between codex entities (replaces previous
+/// agent-derived links; human links untouched). Returns links stored.
+pub async fn relations_build(root: &Path) -> Result<usize> {
+    ensure_not_running("relations")?;
+    let _run = RunHandle::register("relations");
+
+    let all = codex::list_entities(root)?;
+    let entities = all["entities"].as_array().cloned().unwrap_or_default();
+    if entities.len() < 2 {
+        bail!("need at least two codex entities to derive links");
+    }
+    let mut ids: HashMap<String, i64> = HashMap::new();
+    let mut listing = String::from("Entities:\n");
+    for e in &entities {
+        let (Some(name), Some(id)) = (e["name"].as_str(), e["id"].as_i64()) else { continue };
+        ids.insert(name.to_lowercase(), id);
+        for a in e["aliases"].as_array().into_iter().flatten() {
+            if let Some(a) = a.as_str() {
+                ids.insert(a.to_lowercase(), id);
+            }
+        }
+        listing.push_str(&format!(
+            "- {} ({}): {}\n",
+            name,
+            e["kind"].as_str().unwrap_or(""),
+            e["summary"].as_str().unwrap_or("")
+        ));
+    }
+
+    let mut context = listing;
+    for (file, facts) in ledger_facts(root, None)?.iter().take(40) {
+        context.push_str(&format!("\n[{}]\n", file));
+        for f in facts {
+            context.push_str(&format!("- {}\n", f["fact"].as_str().unwrap_or("")));
+        }
+    }
+    let context: String = context.chars().take(24_000).collect();
+
+    let derived: DerivedRelations = one_shot_typed(root, RELATIONS_SYSTEM, &context).await?;
+    let edges: Vec<(i64, i64, String)> = derived
+        .relations
+        .into_iter()
+        .filter_map(|r| {
+            let from = *ids.get(&r.from.to_lowercase())?;
+            let to = *ids.get(&r.to.to_lowercase())?;
+            let label = r.label.trim().to_string();
+            (from != to && !label.is_empty()).then_some((from, to, label))
+        })
+        .collect();
+    codex::relations_replace_llm(root, &edges)
+}
+
 // ---------- Synopsis drafting (index cards) ----------
 
 const SYNOPSIS_SYSTEM: &str = "You write index-card synopses for a novelist's own scenes. \

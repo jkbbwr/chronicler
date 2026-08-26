@@ -22,18 +22,19 @@ import { EntitySheet } from "./components/center/EntitySheet";
 import { InboxView } from "./components/center/InboxView";
 import { IndexCardsView } from "./components/center/IndexCardsView";
 import { TimelineView } from "./components/center/TimelineView";
+import { GraphView } from "./components/center/GraphView";
 import { SettingsView } from "./components/center/SettingsView";
 import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
 import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
-import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2, Maximize2, Minimize2, Clock as ClockIcon } from "lucide-solid";
+import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2, Maximize2, Minimize2, Clock as ClockIcon, Share2 } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
 // Center tabs are typed: files edit prose; entity sheets, the Discovered
 // inbox, and Settings are first-class tabs too (panels browse, center edits).
-export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards" | "report" | "timeline";
+export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards" | "report" | "timeline" | "graph";
 
 interface TabState {
   kind: TabKind;
@@ -178,15 +179,15 @@ const App: Component = () => {
   };
 
   const [sweeping, setSweeping] = createSignal(false);
-  const runContinuity = async () => {
+  const runContinuity = async (relPath?: string) => {
     if (sweeping()) {
       await window.chronicler.invoke("agents/stop", { id: "continuity" }).catch(() => {});
       return;
     }
     setSweeping(true);
-    setStatus("Continuity sweep: starting...");
+    setStatus(relPath ? `Continuity check: ${relPath}...` : "Continuity sweep: starting...");
     try {
-      const res = await window.chronicler.invoke("agents/continuity", {});
+      const res = await window.chronicler.invoke("agents/continuity", relPath ? { rel_path: relPath } : {});
       setStatus(
         res.stopped
           ? `Continuity sweep stopped — ${res.findings} finding(s) kept`
@@ -414,6 +415,8 @@ const App: Component = () => {
         pushTab({ kind: "cards", id: "cards", title: "Index Cards" }, false);
       } else if (ref.kind === "timeline") {
         pushTab({ kind: "timeline", id: "timeline", title: "Timeline" }, false);
+      } else if (ref.kind === "graph") {
+        pushTab({ kind: "graph", id: "graph", title: "Relationships" }, false);
       }
     }
     if (session.activeTab && getTab(session.activeTab)) {
@@ -642,6 +645,11 @@ const App: Component = () => {
     setTimelineVersion(v => v + 1);
     pushTab({ kind: "timeline", id: "timeline", title: "Timeline" });
   };
+  const [graphVersion, setGraphVersion] = createSignal(0);
+  const openGraphTab = () => {
+    setGraphVersion(v => v + 1);
+    pushTab({ kind: "graph", id: "graph", title: "Relationships" });
+  };
   const openReportTab = (key: string, title: string, markdown: string) => {
     const id = `report:${key}`;
     removeTabs(t => t.id === id); // fresh content replaces the old report
@@ -861,7 +869,7 @@ const App: Component = () => {
     { id: "compile.open", title: "Compile Manuscript...", keybinding: "Mod+Shift+E", run: () => setWorkbench("isCompileOpen", true) },
     { id: "codex.open", title: "Codex: Show World Bible", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "codex"); } },
     { id: "rig.open", title: "Agent: Open Panel", keybinding: "Mod+Shift+G", run: () => { setWorkbench("panels", "right", "visible", true); setWorkbench("panels", "right", "activeView", "agent"); } },
-    { id: "agent.continuity", title: "Agent: Check Continuity", run: runContinuity },
+    { id: "agent.continuity", title: "Agent: Check Continuity", run: () => runContinuity() },
     {
       id: "agent.ledger", title: "Agent: Update Fact Ledger",
       run: async () => {
@@ -905,6 +913,7 @@ const App: Component = () => {
     },
     { id: "agent.critique", title: "Agent: Reading Critique...", run: () => setCritiqueOpen(true) },
     { id: "agent.timeline", title: "Agent: Story Timeline", run: openTimelineTab },
+    { id: "codex.graph", title: "Codex: Relationship Graph", run: openGraphTab },
     { id: "agent.askSelection", title: "Agent: Ask About Selection", keybinding: "Mod+Shift+Q", run: askAgentAboutSelection },
     {
       id: "agent.index", title: "Agent: Index Manuscript",
@@ -1006,6 +1015,7 @@ const App: Component = () => {
     if (tab.kind === "settings") return <SettingsIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "cards") return <LayoutGrid size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "timeline") return <ClockIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
+    if (tab.kind === "graph") return <Share2 size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     return null;
   };
 
@@ -1018,6 +1028,7 @@ const App: Component = () => {
     if (t.kind === "cards") return "Index Cards";
     if (t.kind === "report") return t.title;
     if (t.kind === "timeline") return "Story Timeline";
+    if (t.kind === "graph") return "Relationships";
     return "Settings";
   };
 
@@ -1049,6 +1060,7 @@ const App: Component = () => {
                       onNewFolder={handleNewFolder}
                       onRename={handleRenameItem}
                       onDelete={handleDeleteItem}
+                      onCheckContinuity={(file) => runContinuity(file)}
                     />
                   )}
                   {workbench.panels.left.activeView === "outliner" && (
@@ -1155,6 +1167,14 @@ const App: Component = () => {
                     <ClockIcon size={14} />
                     <span class="toolbar-tooltip">Story Timeline</span>
                   </button>
+                  <button
+                    class="toolbar-icon"
+                    classList={{ active: activeTab() === "graph" }}
+                    onClick={openGraphTab}
+                  >
+                    <Share2 size={14} />
+                    <span class="toolbar-tooltip">Relationship Graph</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1257,6 +1277,13 @@ const App: Component = () => {
                           }}
                         />
                       </div>
+                    )}
+                    {tab.kind === "graph" && (
+                      <GraphView
+                        refreshVersion={graphVersion() + codexVersion()}
+                        onOpenEntity={openEntityTab}
+                        onStatus={setStatus}
+                      />
                     )}
                     {tab.kind === "timeline" && (
                       <TimelineView

@@ -410,3 +410,92 @@ pub fn promote_candidate(
     conn.execute("DELETE FROM candidates WHERE name = ?1 COLLATE NOCASE", [name])?;
     Ok(result)
 }
+
+// ---------- Relationship graph ----------
+
+/// Everything the graph view needs: nodes, scene co-occurrence edges
+/// (computed live from the mention index), and stored relations.
+pub fn graph(root: &Path) -> Result<Value> {
+    let conn = db::open(root)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.name, e.kind,
+                (SELECT COUNT(*) FROM mentions m WHERE m.entity_id = e.id) AS mention_count
+         FROM entities e",
+    )?;
+    let nodes: Vec<Value> = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "kind": r.get::<_, String>(2)?,
+                "mentions": r.get::<_, i64>(3)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    // Pairs of entities appearing in the same scene, weighted by scene count
+    let mut stmt = conn.prepare(
+        "SELECT a.entity_id, b.entity_id, COUNT(DISTINCT a.file)
+         FROM mentions a
+         JOIN mentions b ON a.file = b.file AND a.entity_id < b.entity_id
+         GROUP BY a.entity_id, b.entity_id",
+    )?;
+    let co_edges: Vec<Value> = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "a": r.get::<_, i64>(0)?,
+                "b": r.get::<_, i64>(1)?,
+                "weight": r.get::<_, i64>(2)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    // Stored relations, dangling entries (deleted entities) filtered out
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.from_id, r.to_id, r.label, r.source
+         FROM relations r
+         JOIN entities ef ON ef.id = r.from_id
+         JOIN entities et ON et.id = r.to_id",
+    )?;
+    let relations: Vec<Value> = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "from": r.get::<_, i64>(1)?,
+                "to": r.get::<_, i64>(2)?,
+                "label": r.get::<_, String>(3)?,
+                "source": r.get::<_, String>(4)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    Ok(json!({ "nodes": nodes, "coEdges": co_edges, "relations": relations }))
+}
+
+pub fn relation_add(root: &Path, from_id: i64, to_id: i64, label: &str, source: &str) -> Result<i64> {
+    let conn = db::open(root)?;
+    conn.execute(
+        "INSERT INTO relations (from_id, to_id, label, source, created) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![from_id, to_id, label.trim(), source, db::now()],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn relation_delete(root: &Path, id: i64) -> Result<()> {
+    let conn = db::open(root)?;
+    conn.execute("DELETE FROM relations WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+pub fn relations_replace_llm(root: &Path, edges: &[(i64, i64, String)]) -> Result<usize> {
+    let conn = db::open(root)?;
+    conn.execute("DELETE FROM relations WHERE source = 'llm'", [])?;
+    for (from, to, label) in edges {
+        conn.execute(
+            "INSERT INTO relations (from_id, to_id, label, source, created) VALUES (?1, ?2, ?3, 'llm', ?4)",
+            rusqlite::params![from, to, label, db::now()],
+        )?;
+    }
+    Ok(edges.len())
+}

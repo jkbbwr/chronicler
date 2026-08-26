@@ -16,6 +16,7 @@ interface BinderViewProps {
   onNewFolder?: (name: string) => Promise<void> | void;
   onRename?: (oldName: string, newName: string) => Promise<void> | void;
   onDelete?: (name: string) => Promise<void> | void;
+  onCheckContinuity?: (file: string) => void;
 }
 
 const basename = (p: string) => p.split("/").pop()!;
@@ -299,6 +300,7 @@ export const BinderView: Component<BinderViewProps> = (props) => {
           onClose={() => setContextMenu(null)}
           onRename={startRename}
           onDelete={handleDelete}
+            onCheckContinuity={props.onCheckContinuity}
           onNewFile={(folderPath) => startCreate("file", folderPath)}
           onNewFolder={(folderPath) => startCreate("folder", folderPath)}
         />

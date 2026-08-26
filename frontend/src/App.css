@@ -493,3 +493,26 @@ body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* Relationship graph */
+.graph-node-label {
+  font-size: 12px;
+  fill: var(--text-main);
+  paint-order: stroke;
+  stroke: var(--bg-color);
+  stroke-width: 3px;
+  pointer-events: none;
+  user-select: none;
+}
+.graph-edge-label {
+  font-size: 10.5px;
+  fill: var(--text-muted);
+  paint-order: stroke;
+  stroke: var(--bg-color);
+  stroke-width: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+.graph-edge-label:hover {
+  fill: #e06c75;
+}
