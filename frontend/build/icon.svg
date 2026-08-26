@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#2a3247"/>
+      <stop offset="100%" stop-color="#10131c"/>
+    </linearGradient>
+    <linearGradient id="feather" x1="0.1" y1="0.1" x2="0.9" y2="0.9">
+      <stop offset="0%" stop-color="#f8f1de"/>
+      <stop offset="100%" stop-color="#d6c9a4"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="204" fill="url(#bg)"/>
+
+  <!-- ink swoosh from the nib -->
+  <path d="M 296 800
+           C 420 862, 570 880, 706 844
+           C 648 886, 486 910, 360 878
+           C 322 866, 300 836, 296 800 Z"
+        fill="#61afef" opacity="0.92"/>
+  <circle cx="748" cy="852" r="25" fill="#61afef"/>
+
+  <!-- feather: wide barbs upper-left of the spine, slim underside -->
+  <path d="M 766 192
+           C 690 182, 592 220, 512 302
+           C 480 336, 452 372, 430 410
+           L 466 420
+           C 440 452, 418 492, 404 534
+           C 390 578, 388 620, 408 650
+           C 428 668, 452 660, 478 634
+           C 566 528, 664 386, 726 274
+           C 744 244, 758 214, 766 192 Z"
+        fill="url(#feather)"/>
+
+  <!-- spine slit through the feather -->
+  <path d="M 414 646 C 520 512, 640 350, 758 200"
+        fill="none" stroke="#1a2030" stroke-width="9" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- bare shaft down to the nib -->
+  <path d="M 414 648 C 380 700, 344 742, 308 776"
+        fill="none" stroke="#e3d7b4" stroke-width="16" stroke-linecap="round"/>
+  <!-- nib -->
+  <path d="M 322 762 L 296 790 L 284 758 C 294 752, 308 754, 322 762 Z" fill="#b9a87e"/>
+</svg>

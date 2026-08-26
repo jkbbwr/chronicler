@@ -6,10 +6,11 @@
     "build:backend": "cargo build --manifest-path backend/Cargo.toml --release",
     "build:frontend": "bun --cwd frontend run build",
     "build": "bun run build:backend && bun run build:frontend",
-    "package": "bun run build:backend && bun --cwd frontend run package",
+    "package": "bun run build:backend && cd frontend && bun run package",
     "test:backend": "cargo test --manifest-path backend/Cargo.toml",
     "test:e2e": "bun frontend/tests/e2e.mjs",
-    "test": "bun run test:backend && bun run test:e2e"
+    "test": "bun run test:backend && bun run test:e2e",
+    "dist": "bun run build:backend && cd frontend && bun run dist"
   },
   "workspaces": [
     "frontend"

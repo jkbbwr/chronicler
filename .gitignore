@@ -5,3 +5,4 @@ dist-electron/
 .env
 .DS_Store
 release/
+frontend/release/

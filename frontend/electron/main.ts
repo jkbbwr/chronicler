@@ -25,6 +25,12 @@ let currentProjectPath: string | undefined =
   projectIdx >= 0 ? args[projectIdx + 1] : undefined;
 
 // Expose CDP in dev so tools can attach to the renderer (9222 is often taken by Chrome)
+// GUI apps launch with a minimal PATH; the backend shells out to `typst`
+// for compile, so make sure the usual install locations are reachable.
+if (app.isPackaged && process.platform === "darwin") {
+  process.env.PATH = `${process.env.PATH ?? ""}:/opt/homebrew/bin:/usr/local/bin`;
+}
+
 if (!app.isPackaged) {
   app.commandLine.appendSwitch("remote-debugging-port", "9223");
 }
