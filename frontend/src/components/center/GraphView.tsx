@@ -1,4 +1,5 @@
 import { type Component, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { Link2, Maximize2, Minimize2, Share2, Sparkles } from "lucide-solid";
 import { workbench, setWorkbench } from "../../stores/workbench";
 
@@ -41,17 +42,16 @@ interface GraphProps {
 }
 
 export const GraphView: Component<GraphProps> = (props) => {
-  const [tick, setTick] = createSignal(0);
-  const [loaded, setLoaded] = createSignal<{ n: number } | null>(null);
+  const [loaded, setLoaded] = createSignal(false);
+  const [g, setG] = createStore<{ nodes: GNode[]; co: CoEdge[]; rels: Relation[] }>({
+    nodes: [], co: [], rels: [],
+  });
   const [hovered, setHovered] = createSignal<number | null>(null);
   const [linkMode, setLinkMode] = createSignal(false);
   const [linkFrom, setLinkFrom] = createSignal<number | null>(null);
   const [linkTo, setLinkTo] = createSignal<number | null>(null);
   const [deriving, setDeriving] = createSignal(false);
 
-  let nodes: GNode[] = [];
-  let coEdges: CoEdge[] = [];
-  let relations: Relation[] = [];
   let alpha = 0;
   let raf = 0;
   let svgRef: SVGSVGElement | undefined;
@@ -60,11 +60,11 @@ export const GraphView: Component<GraphProps> = (props) => {
     () => props.refreshVersion,
     async () => {
       try {
-        const g = await window.chronicler.invoke("codex/graph");
-        const prev = new Map(nodes.map(n => [n.id, n]));
-        nodes = (g.nodes as any[]).map((n, i) => {
+        const res = await window.chronicler.invoke("codex/graph");
+        const prev = new Map(g.nodes.map(n => [n.id, { x: n.x, y: n.y }]));
+        const nodes = (res.nodes as any[]).map((n, i) => {
           const old = prev.get(n.id);
-          const angle = (i / Math.max(1, g.nodes.length)) * Math.PI * 2;
+          const angle = (i / Math.max(1, res.nodes.length)) * Math.PI * 2;
           return {
             ...n,
             x: old?.x ?? W / 2 + Math.cos(angle) * 260,
@@ -73,57 +73,57 @@ export const GraphView: Component<GraphProps> = (props) => {
             r: Math.min(26, 9 + Math.sqrt(n.mentions) * 2.4),
           };
         });
-        coEdges = g.coEdges;
-        relations = g.relations;
-        setLoaded({ n: nodes.length });
+        setG(reconcile({ nodes, co: res.coEdges, rels: res.relations }, { key: null }));
+        setLoaded(true);
         reheat();
-        return g;
+        return res;
       } catch {
-        setLoaded({ n: 0 });
+        setLoaded(true);
         return null;
       }
     }
   );
 
-  const byId = (id: number) => nodes.find(n => n.id === id);
+  const byId = (id: number) => g.nodes.find(n => n.id === id);
 
   const step = () => {
-    // Pairwise repulsion
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = b.x - a.x, dy = b.y - a.y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
-        const f = Math.min(12, 26000 / d2) * alpha;
-        const d = Math.sqrt(d2);
-        a.vx -= (dx / d) * f; a.vy -= (dy / d) * f;
-        b.vx += (dx / d) * f; b.vy += (dy / d) * f;
+    setG(produce(s => {
+      const nodes = s.nodes;
+      const find = (id: number) => nodes.find(n => n.id === id);
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i], b = nodes[j];
+          let dx = b.x - a.x, dy = b.y - a.y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+          const f = Math.min(12, 26000 / d2) * alpha;
+          const d = Math.sqrt(d2);
+          a.vx -= (dx / d) * f; a.vy -= (dy / d) * f;
+          b.vx += (dx / d) * f; b.vy += (dy / d) * f;
+        }
       }
-    }
-    // Springs
-    const spring = (ai: number, bi: number, rest: number, k: number) => {
-      const a = byId(ai), b = byId(bi);
-      if (!a || !b) return;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-      const f = (d - rest) * k * alpha;
-      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
-    };
-    for (const e of coEdges) spring(e.a, e.b, 170 - Math.min(60, e.weight * 12), 0.06);
-    for (const r of relations) spring(r.from, r.to, 190, 0.05);
-    // Gravity + integrate
-    for (const n of nodes) {
-      n.vx += (W / 2 - n.x) * 0.004 * alpha;
-      n.vy += (H / 2 - n.y) * 0.004 * alpha;
-      n.x = Math.max(40, Math.min(W - 40, n.x + n.vx));
-      n.y = Math.max(48, Math.min(H - 56, n.y + n.vy));
-      n.vx *= 0.82; n.vy *= 0.82;
-    }
+      const spring = (ai: number, bi: number, rest: number, k: number) => {
+        const a = find(ai), b = find(bi);
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        const f = (d - rest) * k * alpha;
+        a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+        b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+      };
+      for (const e of s.co) spring(e.a, e.b, 170 - Math.min(60, e.weight * 12), 0.06);
+      for (const r of s.rels) spring(r.from, r.to, 190, 0.05);
+      for (const n of nodes) {
+        if (dragging === n.id) continue;
+        n.vx += (W / 2 - n.x) * 0.004 * alpha;
+        n.vy += (H / 2 - n.y) * 0.004 * alpha;
+        n.x = Math.max(40, Math.min(W - 40, n.x + n.vx));
+        n.y = Math.max(48, Math.min(H - 56, n.y + n.vy));
+        n.vx *= 0.82; n.vy *= 0.82;
+      }
+    }));
     alpha *= 0.985;
-    setTick(t => t + 1);
-    if (alpha > 0.004 || dragging) raf = requestAnimationFrame(step);
+    if (alpha > 0.004 || dragging !== null) raf = requestAnimationFrame(step);
     else raf = 0;
   };
 
@@ -134,7 +134,7 @@ export const GraphView: Component<GraphProps> = (props) => {
   onCleanup(() => cancelAnimationFrame(raf));
 
   // ---- Dragging (with click detection) ----
-  let dragging: GNode | null = null;
+  let dragging: number | null = null;
   let dragMoved = 0;
 
   const svgPoint = (e: PointerEvent) => {
@@ -146,19 +146,20 @@ export const GraphView: Component<GraphProps> = (props) => {
   };
 
   const onNodeDown = (n: GNode, e: PointerEvent) => {
-    dragging = n;
+    dragging = n.id;
     dragMoved = 0;
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e: PointerEvent) => {
-    if (!dragging) return;
+    if (dragging === null) return;
     const p = svgPoint(e);
-    dragMoved += Math.abs(p.x - dragging.x) + Math.abs(p.y - dragging.y);
-    dragging.x = p.x;
-    dragging.y = p.y;
-    dragging.vx = 0; dragging.vy = 0;
+    setG(produce(s => {
+      const n = s.nodes.find(n => n.id === dragging);
+      if (!n) return;
+      dragMoved += Math.abs(p.x - n.x) + Math.abs(p.y - n.y);
+      n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0;
+    }));
     if (!raf) { alpha = Math.max(alpha, 0.08); raf = requestAnimationFrame(step); }
-    setTick(t => t + 1);
   };
   const onPointerUp = (n: GNode) => {
     const wasClick = dragMoved < 6;
@@ -223,8 +224,8 @@ export const GraphView: Component<GraphProps> = (props) => {
   };
 
   const adjacent = (id: number) =>
-    coEdges.some(e => (e.a === id || e.b === id) && (e.a === hovered() || e.b === hovered())) ||
-    relations.some(r => (r.from === id || r.to === id) && (r.from === hovered() || r.to === hovered()));
+    g.co.some(e => (e.a === id || e.b === id) && (e.a === hovered() || e.b === hovered())) ||
+    g.rels.some(r => (r.from === id || r.to === id) && (r.from === hovered() || r.to === hovered()));
   const dimmed = (id: number) => hovered() !== null && hovered() !== id && !adjacent(id);
 
   const btn = {
@@ -268,10 +269,10 @@ export const GraphView: Component<GraphProps> = (props) => {
           style={{ width: "100%", height: "100%", display: "block" }}
           onPointerMove={onPointerMove}
         >
-          {(tick() >= 0 && loaded()) && (
+          <Show when={loaded()}>
             <>
               {/* Scene co-occurrence */}
-              <For each={coEdges}>
+              <For each={g.co}>
                 {(e) => {
                   const a = byId(e.a), b = byId(e.b);
                   return a && b ? (
@@ -285,7 +286,7 @@ export const GraphView: Component<GraphProps> = (props) => {
                 }}
               </For>
               {/* Typed relations */}
-              <For each={relations}>
+              <For each={g.rels}>
                 {(r) => {
                   const a = byId(r.from), b = byId(r.to);
                   if (!a || !b) return null;
@@ -313,7 +314,7 @@ export const GraphView: Component<GraphProps> = (props) => {
                 }}
               </For>
               {/* Nodes */}
-              <For each={nodes}>
+              <For each={g.nodes}>
                 {(n) => (
                   <g
                     opacity={dimmed(n.id) ? 0.18 : 1}
@@ -337,7 +338,7 @@ export const GraphView: Component<GraphProps> = (props) => {
                 )}
               </For>
             </>
-          )}
+          </Show>
         </svg>
 
         {/* Label form for a pending human link */}
@@ -362,7 +363,7 @@ export const GraphView: Component<GraphProps> = (props) => {
           </div>
         </Show>
 
-        <Show when={loaded() && loaded()!.n === 0}>
+        <Show when={loaded() && g.nodes.length === 0}>
           <div style={{ position: "absolute", inset: 0, display: "flex", "align-items": "center", "justify-content": "center", color: "var(--text-faint)", "font-size": "13px" }}>
             No codex entities yet — the graph draws itself once the world bible has people in it.
           </div>
