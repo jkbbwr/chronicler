@@ -367,3 +367,56 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* Story timeline */
+.timeline-spine {
+  stroke-dasharray: 4000;
+  stroke-dashoffset: 4000;
+  animation: timeline-draw 1.1s ease-out forwards;
+}
+@keyframes timeline-draw {
+  to { stroke-dashoffset: 0; }
+}
+.timeline-node {
+  opacity: 0;
+  animation: timeline-pop 0.45s ease-out forwards;
+}
+@keyframes timeline-pop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.timeline-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transform: translateY(8px);
+  animation: timeline-rise 0.5s ease-out forwards;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.timeline-card:hover {
+  transform: translateY(0) scale(1.025);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+@keyframes timeline-rise {
+  to { opacity: 1; transform: translateY(0); }
+}
+.timeline-chip {
+  font-size: 10.5px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.timeline-chip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

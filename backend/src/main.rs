@@ -506,6 +506,11 @@ async fn handle_request_line(
         "agents/facts" => agents::ledger_report(root, req.params["subject"].as_str())
             .map(|md| json!({ "markdown": md }))
             .map_err(rpc_err),
+        "agents/timeline_build" => match agents::timeline_build(root).await {
+            Ok(v) => Ok(v),
+            Err(e) => Err(rpc_err(e)),
+        },
+        "agents/timeline" => agents::timeline_get(root).map_err(rpc_err),
         "agents/synopses" => match agents::draft_synopses(root, tx.clone()).await {
             Ok(drafted) => Ok(json!({ "drafted": drafted })),
             Err(e) => Err(rpc_err(e)),

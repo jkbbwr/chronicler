@@ -21,18 +21,19 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { EntitySheet } from "./components/center/EntitySheet";
 import { InboxView } from "./components/center/InboxView";
 import { IndexCardsView } from "./components/center/IndexCardsView";
+import { TimelineView } from "./components/center/TimelineView";
 import { SettingsView } from "./components/center/SettingsView";
 import { ProblemsPanel, type LogEntry } from "./components/ProblemsPanel";
 import { StatsModal, type ProjectStats, type WritingTargets } from "./components/StatsModal";
 import { type Diag } from "./components/editor/diagSquiggles";
 import { Divider } from "./components/Divider";
-import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2, Maximize2, Minimize2 } from "lucide-solid";
+import { X, Circle, ChevronRight, User, Inbox as InboxIcon, Settings as SettingsIcon, LayoutGrid, Columns2, Maximize2, Minimize2, Clock as ClockIcon } from "lucide-solid";
 import { registerCommands, matchKeybinding, runCommand } from "./commands";
 import "./App.css";
 
 // Center tabs are typed: files edit prose; entity sheets, the Discovered
 // inbox, and Settings are first-class tabs too (panels browse, center edits).
-export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards" | "report";
+export type TabKind = "file" | "entity" | "inbox" | "settings" | "cards" | "report" | "timeline";
 
 interface TabState {
   kind: TabKind;
@@ -411,6 +412,8 @@ const App: Component = () => {
         pushTab({ kind: "settings", id: "settings", title: "Settings" }, false);
       } else if (ref.kind === "cards") {
         pushTab({ kind: "cards", id: "cards", title: "Index Cards" }, false);
+      } else if (ref.kind === "timeline") {
+        pushTab({ kind: "timeline", id: "timeline", title: "Timeline" }, false);
       }
     }
     if (session.activeTab && getTab(session.activeTab)) {
@@ -634,6 +637,11 @@ const App: Component = () => {
 
   const openInboxTab = () => pushTab({ kind: "inbox", id: "inbox", title: "Discovered" });
   const openCardsTab = () => pushTab({ kind: "cards", id: "cards", title: "Index Cards" });
+  const [timelineVersion, setTimelineVersion] = createSignal(0);
+  const openTimelineTab = () => {
+    setTimelineVersion(v => v + 1);
+    pushTab({ kind: "timeline", id: "timeline", title: "Timeline" });
+  };
   const openReportTab = (key: string, title: string, markdown: string) => {
     const id = `report:${key}`;
     removeTabs(t => t.id === id); // fresh content replaces the old report
@@ -896,6 +904,7 @@ const App: Component = () => {
       },
     },
     { id: "agent.critique", title: "Agent: Reading Critique...", run: () => setCritiqueOpen(true) },
+    { id: "agent.timeline", title: "Agent: Story Timeline", run: openTimelineTab },
     { id: "agent.askSelection", title: "Agent: Ask About Selection", keybinding: "Mod+Shift+Q", run: askAgentAboutSelection },
     {
       id: "agent.index", title: "Agent: Index Manuscript",
@@ -996,6 +1005,7 @@ const App: Component = () => {
     if (tab.kind === "inbox") return <InboxIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "settings") return <SettingsIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     if (tab.kind === "cards") return <LayoutGrid size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
+    if (tab.kind === "timeline") return <ClockIcon size={12} style={{ opacity: 0.7, "flex-shrink": 0 }} />;
     return null;
   };
 
@@ -1007,6 +1017,7 @@ const App: Component = () => {
     if (t.kind === "inbox") return "Codex › Discovered";
     if (t.kind === "cards") return "Index Cards";
     if (t.kind === "report") return t.title;
+    if (t.kind === "timeline") return "Story Timeline";
     return "Settings";
   };
 
@@ -1225,6 +1236,13 @@ const App: Component = () => {
                           }}
                         />
                       </div>
+                    )}
+                    {tab.kind === "timeline" && (
+                      <TimelineView
+                        refreshVersion={timelineVersion()}
+                        onOpenScene={openTab}
+                        onStatus={setStatus}
+                      />
                     )}
                     {tab.kind === "cards" && (
                       <IndexCardsView

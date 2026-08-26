@@ -1006,6 +1006,58 @@ pub async fn run_continuity(
     }
 }
 
+// ---------- Story timeline ----------
+
+const TIMELINE_SYSTEM: &str = "You reconstruct the story-time timeline of a novel from its fact \
+ledger. Order events by when they happen IN THE STORY WORLD — not by reading order. Produce 5 to \
+20 events: each a distinct story beat or era with clear time anchoring or strong sequence \
+evidence. Backstory and long-past events come first. Use the scene paths exactly as given.";
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Timeline {
+    /// Events in story-chronological order.
+    events: Vec<TimelineEvent>,
+}
+
+#[derive(serde::Serialize, Deserialize, schemars::JsonSchema)]
+struct TimelineEvent {
+    /// Short story-time label, e.g. "Years ago — the Siege", "Dawn, two days later".
+    when: String,
+    /// One sentence: what happens.
+    what: String,
+    /// Scene paths where this is established or shown.
+    scenes: Vec<String>,
+}
+
+/// Build the story timeline from the ledger (one typed call) and persist it.
+pub async fn timeline_build(root: &Path) -> Result<Value> {
+    ensure_not_running("timeline")?;
+    let _run = RunHandle::register("timeline");
+    let groups = ledger_facts(root, None)?;
+    if groups.is_empty() {
+        bail!("the fact ledger is empty — run 'Agent: Update Fact Ledger' first");
+    }
+    let mut digest = String::from("Fact ledger, scenes in reading order:\n");
+    for (file, facts) in &groups {
+        digest.push_str(&format!("\n## {}\n", file));
+        for f in facts {
+            let time = f["time"].as_str().map(|t| format!(" [time: {t}]")).unwrap_or_default();
+            digest.push_str(&format!("- {}{}\n", f["fact"].as_str().unwrap_or(""), time));
+        }
+    }
+    let digest: String = digest.chars().take(28_000).collect();
+    let timeline: Timeline = one_shot_typed(root, TIMELINE_SYSTEM, &digest).await?;
+    let stored = json!({ "builtAt": db::now(), "events": timeline.events });
+    db::set_setting(root, "timeline", &stored.to_string())?;
+    Ok(stored)
+}
+
+pub fn timeline_get(root: &Path) -> Result<Value> {
+    Ok(db::get_setting(root, "timeline")?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(Value::Null))
+}
+
 // ---------- Synopsis drafting (index cards) ----------
 
 const SYNOPSIS_SYSTEM: &str = "You write index-card synopses for a novelist's own scenes. \
