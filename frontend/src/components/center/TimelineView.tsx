@@ -142,7 +142,9 @@ export const TimelineView: Component<TimelineProps> = (props) => {
             {/* Spine + connectors */}
             <svg width={width()} height="100%" style={{ position: "absolute", inset: 0 }} preserveAspectRatio="none">
               <defs>
-                <linearGradient id="tl-spine" x1="0" y1="0" x2="1" y2="0">
+                {/* userSpaceOnUse: a straight line has a zero-height bounding
+                    box, which silently kills objectBoundingBox gradients */}
+                <linearGradient id="tl-spine" gradientUnits="userSpaceOnUse" x1="30" y1="0" x2={width() - 30} y2="0">
                   <stop offset="0%" stop-color="hsl(210 70% 55%)" />
                   <stop offset="100%" stop-color="hsl(35 80% 55%)" />
                 </linearGradient>
