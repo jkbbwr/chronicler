@@ -1,0 +1,177 @@
+/* ================= Write ================= */
+.page-column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-color);
+}
+.page-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 40px;
+  padding: 0 var(--sp-4);
+  background: linear-gradient(var(--bg-color) 55%, transparent);
+  transition: opacity var(--dur) var(--ease);
+}
+.page-crumb { flex: 1; min-width: 0; overflow: hidden; font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; text-overflow: ellipsis; }
+.page-chapter { color: var(--text-faint); }
+.page-actions { display: flex; gap: 2px; }
+
+.scene-editor { flex: 1; min-height: 0; overflow: hidden; }
+.scene-editor .cm-editor { height: 100%; }
+
+.write-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  flex: 1;
+  padding: var(--sp-6);
+}
+.write-empty h2 { margin: 0; font-family: var(--font-prose); font-size: var(--fs-display); font-weight: 500; color: var(--text-main); }
+.write-recents { display: flex; flex-direction: column; width: min(420px, 100%); }
+.write-recents .list-row { width: 100%; background: none; border: none; text-align: left; font-family: var(--font-prose); font-size: var(--fs-lg); }
+.write-empty-actions { display: flex; gap: var(--sp-2); }
+
+.reference-pane {
+  display: flex;
+  flex-direction: column;
+  width: min(42%, 560px);
+  min-width: 280px;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border-color);
+}
+.reference-title { flex: 1; min-width: 0; overflow: hidden; font-size: var(--fs-sm); color: var(--text-main); white-space: nowrap; text-overflow: ellipsis; }
+.reference-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ================= Review ================= */
+.review-main { display: flex; flex-direction: column; flex: 1; min-width: 0; background: var(--bg-color); }
+.review-scene-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border-color);
+}
+.review-doc { flex: 1; min-height: 0; overflow-y: auto; }
+.review-sheet {
+  display: flex;
+  gap: var(--sp-6);
+  justify-content: center;
+  padding: var(--sp-6) var(--sp-5) 40vh;
+}
+.review-text { flex: 0 1 calc(var(--prose-measure) + 2em); min-width: 0; }
+/* In Review the text flows in the page's scroller (so margin cards can align). */
+.scene-editor.flow { overflow: visible; }
+.scene-editor.flow .cm-editor { height: auto !important; }
+.scene-editor.flow .cm-scroller { overflow: visible !important; padding: 0 !important; }
+.review-margin { position: relative; flex: 0 0 300px; }
+
+.finding-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--text-faint);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: top var(--dur) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.finding-card:hover { border-color: var(--text-faint); }
+.finding-card.active { z-index: 1; box-shadow: var(--shadow-pop); transform: translateX(-6px); }
+.finding-card[data-source="spelling"] { border-left-color: var(--danger); }
+.finding-card[data-source="grammar"] { border-left-color: var(--info); }
+.finding-card[data-source="style"] { border-left-color: var(--warning); }
+.finding-card[data-source="assistant"] { border-left-color: var(--ai); }
+.finding-head { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.finding-source { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.finding-quote { overflow: hidden; font-family: var(--font-prose); color: var(--text-main); white-space: nowrap; text-overflow: ellipsis; }
+.finding-message { margin-top: 2px; color: var(--text-muted); line-height: 1.45; }
+.finding-fixes { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); }
+.finding-fixes .btn { font-family: var(--font-prose); font-size: var(--fs-sm); }
+.finding-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-top: var(--sp-1); margin-left: calc(-1 * var(--sp-2)); }
+
+.review-queue-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.review-setup { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: 0 var(--sp-3) var(--sp-2); padding: var(--sp-2) var(--sp-3); background: var(--info-soft); border-radius: var(--radius-md); }
+.review-setup .hint { margin: 0; }
+.queue-group { padding-bottom: var(--sp-2); }
+.queue-item {
+  display: flex;
+  gap: var(--sp-2);
+  margin: 0 var(--sp-2);
+  padding: 6px var(--sp-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.queue-item:hover { background: var(--hover-bg); }
+.queue-item.active { background: var(--active-bg); }
+.queue-dot { flex-shrink: 0; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--text-faint); }
+.queue-item[data-source="spelling"] .queue-dot { background: var(--danger); }
+.queue-item[data-source="grammar"] .queue-dot { background: var(--info); }
+.queue-item[data-source="style"] .queue-dot { background: var(--warning); }
+.queue-item[data-source="assistant"] .queue-dot { background: var(--ai); }
+.queue-text { min-width: 0; }
+.queue-quote { overflow: hidden; font-family: var(--font-prose); font-size: var(--fs-md); color: var(--text-main); white-space: nowrap; text-overflow: ellipsis; }
+.queue-message { font-size: var(--fs-xs); color: var(--text-faint); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ================= Reports ================= */
+.report-page { position: relative; flex: 1; min-height: 0; overflow-y: auto; }
+.report-body { max-width: var(--page-measure); margin: 0 auto; padding: var(--sp-6) var(--sp-5) var(--sp-7); font-size: 14px; }
+.report-actions { position: absolute; top: var(--sp-4); right: var(--sp-4); }
+
+/* ================= Plan ================= */
+.plan-column { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.plan-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.plan-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.plan-body > * { flex: 1; min-height: 0; }
+
+/* ================= Codex ================= */
+.codex-main { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow-y: auto; background: var(--bg-color); container-type: inline-size; }
+.codex-main > .empty { flex: 1; }
+.review-side-note { margin: 0; padding: var(--sp-3); }
+.review-mode .tabs { gap: var(--sp-3); }
+
+/* Chapter view: every scene of the chapter, one continuous page */
+.chapter-page { flex: 1; min-height: 0; overflow-y: auto; padding: 12vh 48px 40vh; }
+.chapter-scene { max-width: calc(var(--prose-measure) + 2em); margin: 0 auto; }
+.chapter-break { margin: var(--sp-6) 0 var(--sp-5); text-align: center; font-size: 18px; letter-spacing: 0.4em; color: var(--text-faint); }
+.chapter-scene-name {
+  display: block;
+  margin-bottom: var(--sp-2);
+  padding: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.chapter-scene.current .chapter-scene-name { color: var(--accent); }
+.page-view-switch button { height: 20px; padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.page-actions { align-items: center; gap: var(--sp-1); }
+.reference-note { display: flex; flex-direction: column; }
+.reference-note .scene-editor .cm-scroller { padding: var(--sp-5) var(--sp-4) 30vh !important; }
+.page-column { position: relative; }

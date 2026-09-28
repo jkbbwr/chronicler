@@ -1,9 +1,10 @@
 import { type Component, createResource, For, Show } from "solid-js";
-import { BookOpenCheck, FileText } from "lucide-solid";
+import { BookOpenCheck } from "lucide-solid";
+import { Button } from "../ui";
+import "./CritiqueView.css";
 
-// Left-rail browser for the last reading critique: per-scene notes at a
-// glance, click through to scenes, full report and wizard one click away.
-// (Panels browse, center edits.)
+// The last reading critique, scene by scene (Review › Critique). The full
+// report shows beside it; clicking a scene opens its findings.
 
 interface CritiqueScene {
   file: string;
@@ -27,8 +28,9 @@ interface CritiqueViewProps {
 const sceneName = (path: string) => path.split("/").pop()!.replace(/\.md$/, "");
 
 export const CritiqueView: Component<CritiqueViewProps> = (props) => {
+  // Wrapped: a bare version number of 0 is falsy and would never fetch.
   const [results] = createResource(
-    () => props.refreshVersion,
+    () => ({ v: props.refreshVersion }),
     async () => {
       try {
         const res = await window.chronicler.invoke("db/get", { key: "critiqueResults" });
@@ -39,62 +41,36 @@ export const CritiqueView: Component<CritiqueViewProps> = (props) => {
     }
   );
 
-  const button = {
-    width: "100%", padding: "7px 12px", background: "transparent",
-    border: "1px solid var(--border-color)", color: "var(--text-muted)",
-    "border-radius": "6px", cursor: "pointer", "font-size": "12px",
-    "margin-bottom": "8px",
-  } as const;
-
   return (
-    <div style={{ padding: "12px", "font-size": "12.5px", height: "100%", "overflow-y": "auto" }}>
-      <button style={{ ...button, color: "var(--accent)", "border-color": "var(--accent)" }} onClick={props.onRunWizard}>
-        <BookOpenCheck size={12} style={{ "vertical-align": "-2px" }} /> Run reading critique…
-      </button>
+    <div class="critique-list">
       <Show
-        when={results()}
-        fallback={
-          <div style={{ color: "var(--text-faint)", "line-height": "1.6", padding: "4px" }}>
-            No critique yet. Describe your reader in the wizard and the agent reviews every scene
-            against that brief.
-          </div>
-        }
+        when={results.latest}
+        fallback={<p class="hint critique-hint">Write a brief describing your reader, and the agent reads every scene against it.</p>}
       >
         {(r) => (
           <>
-            <button style={button} onClick={props.onOpenReport}>Open full report</button>
-            <div style={{ color: "var(--text-faint)", "font-size": "11px", margin: "4px 0 10px" }}>
-              {new Date(r().ranAt * 1000).toLocaleString()} — {r().problems} stumbling block(s)
+            <div class="hint critique-hint">
+              {new Date(r().ranAt * 1000).toLocaleString()} · {r().problems} stumbling block{r().problems === 1 ? "" : "s"}
             </div>
             <For each={r().scenes}>
               {(scene) => (
-                <div
-                  onClick={() => props.onOpenScene(scene.file)}
-                  title={scene.file}
-                  style={{ padding: "7px 8px", "border-radius": "6px", cursor: "pointer", "margin-bottom": "4px" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-bg)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-                >
-                  <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-                    <FileText size={11} style={{ opacity: 0.6, "flex-shrink": 0 }} />
-                    <span style={{ color: "var(--text-main)", "font-weight": 600, flex: 1, overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis" }}>
-                      {sceneName(scene.file)}
-                    </span>
-                    <Show when={scene.problems > 0}>
-                      <span style={{ "font-size": "10.5px", color: "#b689e0", border: "1px solid #b689e0", "border-radius": "8px", padding: "0 6px", "flex-shrink": 0 }}>
-                        {scene.problems}
-                      </span>
-                    </Show>
+                <div class="critique-scene" title={scene.file} onClick={() => props.onOpenScene(scene.file)}>
+                  <div class="critique-scene-head">
+                    <span class="critique-scene-name">{sceneName(scene.file)}</span>
+                    <Show when={scene.problems > 0}><span class="count-badge critique-count">{scene.problems}</span></Show>
                   </div>
-                  <div style={{ color: "var(--text-muted)", "margin-top": "3px", "line-height": "1.5", display: "-webkit-box", "-webkit-line-clamp": "3", "-webkit-box-orient": "vertical", overflow: "hidden" }}>
-                    {scene.notes}
-                  </div>
+                  <div class="critique-notes">{scene.notes}</div>
                 </div>
               )}
             </For>
           </>
         )}
       </Show>
+      <div class="critique-actions">
+        <Button size="sm" variant={results.latest ? "secondary" : "primary"} onClick={props.onRunWizard}>
+          <BookOpenCheck size={12} /> {results.latest ? "New critique…" : "Start a reading critique…"}
+        </Button>
+      </div>
     </div>
   );
 };

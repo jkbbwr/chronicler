@@ -1,0 +1,64 @@
+/* The first page with no project open: a title page, not a dashboard.
+   Sits under modals (z 100) so New Project can open over it. */
+.welcome {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-color);
+  animation: fade-in var(--dur) var(--ease);
+}
+.welcome > .titlebar { display: block; background: transparent; border-bottom: none; }
+
+.welcome-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-7);
+  padding: var(--sp-6) var(--sp-5);
+  overflow-y: auto;
+}
+.welcome-body.has-recents { justify-content: flex-start; padding-top: 14vh; }
+
+.welcome-hero { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.welcome-title {
+  margin: 0;
+  font-family: var(--font-prose);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
+}
+.welcome-tagline {
+  margin: var(--sp-2) 0 0;
+  font-family: var(--font-prose);
+  font-size: var(--fs-lg);
+  font-style: italic;
+  color: var(--text-faint);
+}
+.welcome-actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-6); }
+.welcome-actions .btn { height: 32px; padding: 0 var(--sp-4); font-size: var(--fs-md); }
+
+.welcome-recents { width: min(440px, 100%); }
+.welcome-recents .section-label { padding: 0 var(--sp-3) var(--sp-2); }
+.welcome-recent { min-height: 44px; padding: var(--sp-2) var(--sp-3); }
+.welcome-recent-text { flex: 1; min-width: 0; }
+.welcome-recent-name {
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.welcome-recent-path {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

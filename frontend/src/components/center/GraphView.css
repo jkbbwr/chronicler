@@ -1,0 +1,86 @@
+/* Relationship graph. Entity kinds borrow semantic hues so every theme,
+   light or dark, keeps them apart and legible. */
+.gv-view { display: flex; flex-direction: column; height: 100%; }
+
+.gv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+}
+.gv-toolbar-icon { color: var(--text-muted); }
+.gv-title { font-size: var(--fs-md); font-weight: 600; color: var(--text-main); }
+.gv-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-right: auto;
+  margin-left: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.gv-legend span { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.gv-legend svg { flex-shrink: 0; }
+.btn.gv-linking { color: var(--accent); border-color: var(--accent); }
+
+.gv-stage { position: relative; flex: 1; min-height: 0; }
+.gv-svg { display: block; width: 100%; height: 100%; }
+
+.gv-co { stroke: var(--text-faint); }
+.gv-rel { stroke-width: 1.6; stroke-opacity: 0.75; }
+.gv-rel.human { stroke: var(--accent); }
+.gv-rel.agent { stroke: var(--ai); stroke-dasharray: 5 4; }
+
+.gv-edge-label {
+  font-size: 10.5px;
+  fill: var(--text-muted);
+  paint-order: stroke;
+  stroke: var(--bg-color);
+  stroke-width: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+.gv-edge-label:hover { fill: var(--danger); }
+
+.gv-node { --kind: var(--status-idea); cursor: pointer; transition: opacity var(--dur-fast) var(--ease); }
+.gv-svg.linking .gv-node { cursor: crosshair; }
+.gv-node[data-kind="character"] { --kind: var(--status-revised); }
+.gv-node[data-kind="place"] { --kind: var(--success); }
+.gv-node[data-kind="faction"] { --kind: var(--warning); }
+.gv-node[data-kind="item"] { --kind: color-mix(in oklab, var(--warning), var(--danger)); }
+.gv-node[data-kind="creature"] { --kind: var(--danger); }
+.gv-node[data-kind="event"] { --kind: var(--ai); }
+.gv-node[data-kind="lore"] { --kind: color-mix(in oklab, var(--status-revised), var(--success)); }
+.gv-node circle { fill: var(--kind); fill-opacity: 0.16; stroke: var(--kind); stroke-width: 2; }
+.gv-node.picked circle { stroke: var(--accent); stroke-width: 3; }
+
+.gv-node-label {
+  font-size: var(--fs-sm);
+  fill: var(--text-main);
+  paint-order: stroke;
+  stroke: var(--bg-color);
+  stroke-width: 3px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.gv-link-form {
+  position: absolute;
+  top: var(--sp-4);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-main);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(-50%);
+  animation: fade-in var(--dur-fast) var(--ease);
+}
+.gv-link-form .input { width: 150px; }
+
+.gv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }

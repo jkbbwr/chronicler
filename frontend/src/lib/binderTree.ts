@@ -1,10 +1,9 @@
 // Shared binder tree logic: used by the binder sidebar and the compile
 // wizard so both agree on ordering and structure.
 
-export interface FileEntry {
-  name: string;
-  is_dir: boolean;
-}
+/** A manuscript file or folder, as the backend lists it. */
+export type { FileEntry } from "../rpc.gen";
+import type { FileEntry } from "../rpc.gen";
 
 export interface TreeNode {
   path: string;
@@ -23,15 +22,15 @@ export const buildTree = (list: FileEntry[], order: OrderMap): TreeNode[] => {
   const map = new Map<string, TreeNode>();
 
   // Sort so parents come before children
-  const sorted = [...list].sort((a, b) => a.name.length - b.name.length);
+  const sorted = [...list].sort((a, b) => a.path.length - b.path.length);
 
   for (const f of sorted) {
-    const parts = f.name.split("/");
+    const parts = f.path.split("/");
     const name = parts.pop()!;
     const parentPath = parts.join("/");
 
-    const node: TreeNode = { path: f.name, name, is_dir: f.is_dir, children: [] };
-    map.set(f.name, node);
+    const node: TreeNode = { path: f.path, name, is_dir: f.isDir, children: [] };
+    map.set(f.path, node);
 
     if (parentPath === "") {
       rootNodes.push(node);

@@ -2,6 +2,19 @@
 name = "chronicler-backend"
 version = "0.1.0"
 edition = "2024"
+default-run = "chronicler-backend"
+
+[lib]
+name = "chronicler_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "chronicler-backend"
+path = "src/main.rs"
+
+[[bin]]
+name = "gen-bindings"
+path = "src/bin/gen-bindings.rs"
 
 [dependencies]
 tokio = { version = "1.43", features = ["full"] }
@@ -14,26 +27,23 @@ notify = "8"
 rusqlite = { version = "0.33", features = ["bundled"] }
 regex = "1"
 aho-corasick = "1.1.5"
-ndarray = "0.17.2"
 ort = "2.0.0-rc.13"
 tokenizers = "0.23.1"
 reqwest = { version = "0.13.4", features = ["json"] }
-spellbook = "0.4.2"
-nlprule = "0.6.4"
-flate2 = "1.1.9"
 harper-core = "2.8.0"
 rig-core = "0.42.0"
 rig-agent = "0.42.0"
 futures = "0.3.34"
 schemars = { version = "1", features = ["derive"] }
+similar = { version = "3.2.0", features = ["inline"] }
+ts-rs = { version = "12", features = ["serde-json-impl"] }
+trash = "5"
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
+base64 = "0.22"
+sha2 = "0.10"
+dom_smoothie = "0.18"
 
 # harper's curated dictionary decode is unbearably slow unoptimized; keep
 # these crates optimized even in dev builds so engine warm-up stays fast.
 [profile.dev.package.harper-core]
-opt-level = 3
-
-[profile.dev.package.harper-brill]
-opt-level = 3
-
-[profile.dev.package.fst]
 opt-level = 3

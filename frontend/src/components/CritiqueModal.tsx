@@ -1,5 +1,7 @@
 import { type Component, createSignal, onMount } from "solid-js";
-import { X } from "lucide-solid";
+import { Button, Modal } from "./ui";
+import { project } from "../stores/app";
+import "./CritiqueModal.css";
 
 // The reading-critique wizard: the writer describes who the book is for and
 // how it should read; the agent then reviews every scene against that brief.
@@ -17,19 +19,6 @@ interface CritiqueModalProps {
   onClose: () => void;
 }
 
-const label = {
-  display: "block", "margin": "14px 0 5px", "font-size": "12px",
-  color: "var(--text-muted)", "text-transform": "uppercase" as const,
-  "letter-spacing": "0.5px", "font-weight": 600,
-} as const;
-
-const input = {
-  width: "100%", padding: "8px 10px", background: "var(--bg-color)",
-  border: "1px solid var(--border-color)", color: "var(--text-main)",
-  "border-radius": "6px", outline: "none", "font-size": "13px",
-  "box-sizing": "border-box" as const, "font-family": "inherit",
-} as const;
-
 export const CritiqueModal: Component<CritiqueModalProps> = (props) => {
   const [brief, setBrief] = createSignal<CritiqueBrief>({
     audience: "", tone: "", similarAuthors: "", style: "", notes: "",
@@ -37,10 +26,23 @@ export const CritiqueModal: Component<CritiqueModalProps> = (props) => {
   const set = (patch: Partial<CritiqueBrief>) => setBrief({ ...brief(), ...patch });
 
   onMount(async () => {
+    // Start from "About this book"; a previous critique's brief wins where it set a field.
+    const book = project.meta?.brief ?? {};
+    const seeded: CritiqueBrief = {
+      audience: book.audience ?? "",
+      tone: book.tone ?? "",
+      similarAuthors: book.comparables ?? "",
+      style: [book.genre, book.narration].filter(Boolean).join("; "),
+      notes: "",
+    };
+    let saved: Partial<CritiqueBrief> = {};
     try {
       const res = await window.chronicler.invoke("db/get", { key: "critiqueBrief" });
-      if (res.value) setBrief({ ...brief(), ...JSON.parse(res.value) });
+      if (res.value) saved = JSON.parse(res.value);
     } catch { /* fresh brief */ }
+    const merged = { ...seeded };
+    for (const [k, v] of Object.entries(saved)) if (typeof v === "string" && v.trim()) merged[k as keyof CritiqueBrief] = v;
+    setBrief(merged);
   });
 
   const run = async () => {
@@ -51,45 +53,47 @@ export const CritiqueModal: Component<CritiqueModalProps> = (props) => {
   };
 
   return (
-    <div
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", "align-items": "center", "justify-content": "center", "z-index": 300 }}
-      onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}
+    <Modal
+      title="Reading critique"
+      onClose={props.onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={props.onClose}>Cancel</Button>
+          <Button variant="primary" onClick={run}>Review the book</Button>
+        </>
+      }
     >
-      <div style={{ width: "520px", "max-height": "85vh", "overflow-y": "auto", background: "var(--panel-bg)", border: "1px solid var(--border-color)", "border-radius": "10px", padding: "22px 26px 24px" }}>
-        <div style={{ display: "flex", "align-items": "center", "margin-bottom": "4px" }}>
-          <h2 style={{ margin: 0, "font-size": "17px", color: "var(--text-main)" }}>Reading critique</h2>
-          <div style={{ flex: 1 }} />
-          <X size={16} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={props.onClose} />
-        </div>
-        <div style={{ "font-size": "12.5px", color: "var(--text-faint)", "line-height": "1.5" }}>
+      <div class="critique-form">
+        <p class="hint">
           Describe the reader this book is for. The agent reviews every scene against your brief
           and marks where that reader would stumble.
+        </p>
+
+        <div class="field">
+          <label for="critique-audience">Target audience</label>
+          <input id="critique-audience" class="input" placeholder="e.g. adult literary-fantasy readers; patient with slow burns" value={brief().audience} onInput={(e) => set({ audience: e.currentTarget.value })} />
         </div>
 
-        <label style={label}>Target audience</label>
-        <input style={input} placeholder="e.g. adult literary-fantasy readers; patient with slow burns" value={brief().audience} onInput={(e) => set({ audience: e.currentTarget.value })} />
+        <div class="field">
+          <label for="critique-tone">Tone</label>
+          <input id="critique-tone" class="input" placeholder="e.g. melancholy, dry humour underneath, dread that accumulates" value={brief().tone} onInput={(e) => set({ tone: e.currentTarget.value })} />
+        </div>
 
-        <label style={label}>Tone</label>
-        <input style={input} placeholder="e.g. melancholy, dry humour underneath, dread that accumulates" value={brief().tone} onInput={(e) => set({ tone: e.currentTarget.value })} />
+        <div class="field">
+          <label for="critique-authors">Similar authors</label>
+          <input id="critique-authors" class="input" placeholder="e.g. Susanna Clarke, China Miéville, Shirley Jackson" value={brief().similarAuthors} onInput={(e) => set({ similarAuthors: e.currentTarget.value })} />
+        </div>
 
-        <label style={label}>Similar authors</label>
-        <input style={input} placeholder="e.g. Susanna Clarke, China Miéville, Shirley Jackson" value={brief().similarAuthors} onInput={(e) => set({ similarAuthors: e.currentTarget.value })} />
+        <div class="field">
+          <label for="critique-style">Style</label>
+          <input id="critique-style" class="input" placeholder="e.g. close third, short scenes, no ornament for its own sake" value={brief().style} onInput={(e) => set({ style: e.currentTarget.value })} />
+        </div>
 
-        <label style={label}>Style</label>
-        <input style={input} placeholder="e.g. close third, short scenes, no ornament for its own sake" value={brief().style} onInput={(e) => set({ style: e.currentTarget.value })} />
-
-        <label style={label}>Notes</label>
-        <textarea style={{ ...input, "min-height": "70px", resize: "vertical" }} placeholder="Anything else the reviewer should hold in mind" value={brief().notes} onInput={(e) => set({ notes: e.currentTarget.value })} />
-
-        <div style={{ display: "flex", "justify-content": "flex-end", gap: "10px", "margin-top": "20px" }}>
-          <button onClick={props.onClose} style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--border-color)", color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
-            Cancel
-          </button>
-          <button onClick={run} style={{ padding: "8px 18px", background: "var(--accent)", border: "none", color: "#fff", "border-radius": "6px", cursor: "pointer", "font-size": "13px" }}>
-            Review the book
-          </button>
+        <div class="field">
+          <label for="critique-notes">Notes</label>
+          <textarea id="critique-notes" class="input" placeholder="Anything else the reviewer should hold in mind" value={brief().notes} onInput={(e) => set({ notes: e.currentTarget.value })} />
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };

@@ -1,0 +1,38 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg-color);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none; /* chrome isn't selectable; text surfaces opt back in */
+}
+
+.selectable, .cm-editor, input, textarea, [contenteditable] { user-select: text; }
+
+button { font: inherit; color: inherit; }
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: content-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

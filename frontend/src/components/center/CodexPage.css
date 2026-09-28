@@ -1,0 +1,106 @@
+/* Codex pages (entity sheets and the Discovered inbox). */
+.codex-page { width: 100%; max-width: var(--page-measure); margin: 0 auto; padding: var(--sp-6) var(--sp-6) var(--sp-7); }
+.codex-page-header { display: flex; align-items: flex-start; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+.codex-page-header > div:first-child { flex: 1; }
+.codex-page-title { margin: 0 0 var(--sp-1); font-family: var(--font-prose); font-size: var(--fs-display); font-weight: 600; color: var(--text-main); }
+.codex-page-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: flex-end; }
+.codex-busy { margin-top: calc(-1 * var(--sp-3)); color: var(--accent); }
+
+/* Entity page */
+.entity-header { display: flex; align-items: center; gap: var(--sp-3); }
+.entity-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font-family: var(--font-prose);
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--text-main);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+.entity-tools { display: flex; align-items: center; gap: var(--sp-1); }
+.entity-meta { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0 var(--sp-5); }
+.entity-kind {
+  height: 24px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--active-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  outline: none;
+  cursor: pointer;
+}
+.entity-aliases {
+  flex: 1;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-md);
+  font-style: italic;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.entity-aliases:hover { border-color: var(--border-color); }
+.entity-aliases:focus { border-color: var(--accent); font-style: normal; color: var(--text-main); }
+
+.entity-section { margin-bottom: var(--sp-5); }
+.entity-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.entity-section-head h4 { margin: 0; font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.entity-summary, .entity-notes-input, .entity-notes {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-prose);
+  color: var(--text-main);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  outline: none;
+  resize: vertical;
+}
+.entity-summary { font-size: 18px; line-height: 1.5; }
+.entity-notes-input, .entity-notes { min-height: 220px; font-size: 16px; line-height: 1.65; }
+.entity-summary:hover, .entity-notes-input:hover, .entity-notes:hover { border-color: var(--border-color); }
+.entity-summary:focus, .entity-notes-input:focus { border-color: var(--accent); background: var(--panel-bg); }
+.entity-notes { cursor: text; }
+
+/* Discovered */
+.candidate { margin-bottom: var(--sp-3); padding: var(--sp-3) var(--sp-4); background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: var(--radius-lg); }
+.candidate-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); }
+.candidate-name { font-family: var(--font-prose); font-size: 19px; font-weight: 600; color: var(--text-main); }
+.candidate-summary { margin: var(--sp-1) 0 0; color: var(--text-muted); }
+.candidate-context {
+  margin: var(--sp-2) 0 0;
+  padding-left: var(--sp-3);
+  font-family: var(--font-prose);
+  font-size: 14.5px;
+  font-style: italic;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-color);
+}
+.candidate-context.link { cursor: pointer; }
+.candidate-context.link:hover { color: var(--text-main); border-left-color: var(--accent); }
+.candidate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+.candidate-kind { width: 120px; height: 24px; font-size: var(--fs-xs); }
+.candidate-alias { width: 170px; height: 24px; font-size: var(--fs-xs); }
+
+/* Wide windows: "Appears in" moves beside the notes, in extra room — the
+   main column keeps the full page width rather than being split. */
+@container (min-width: 1150px) {
+  .entity-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18rem;
+    column-gap: var(--sp-7);
+    align-items: start;
+    max-width: calc(var(--page-measure) + 18rem + var(--sp-7));
+  }
+  .entity-page > .entity-header, .entity-page > .entity-meta { grid-column: 1 / -1; }
+  .entity-page > .entity-appears { grid-column: 2; grid-row: 3 / span 2; position: sticky; top: var(--sp-4); }
+}

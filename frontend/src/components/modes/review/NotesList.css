@@ -1,0 +1,8 @@
+.notes-list { padding-bottom: var(--sp-5); }
+.notes-scene { text-transform: none; letter-spacing: 0; font-size: var(--fs-sm); color: var(--text-main); }
+.notes-chapter { overflow: hidden; text-transform: none; letter-spacing: 0; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
+.note-item { display: flex; align-items: flex-start; gap: var(--sp-2); margin: 0 var(--sp-2); padding: 6px var(--sp-2); border-radius: var(--radius-sm); cursor: pointer; }
+.note-item:hover { background: var(--hover-bg); }
+.note-text { flex: 1; min-width: 0; font-family: var(--font-prose); font-size: 14px; font-style: italic; line-height: 1.45; color: var(--text-muted); white-space: pre-wrap; }
+.note-item .icon-btn { visibility: hidden; }
+.note-item:hover .icon-btn { visibility: visible; }

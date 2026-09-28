@@ -1,0 +1,75 @@
+/* Writing statistics. */
+.stats { display: flex; flex-direction: column; gap: var(--sp-5); }
+
+.stats-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-md);
+}
+.stats-heading { margin: 0 0 var(--sp-2); font-size: var(--fs-md); font-weight: 600; color: var(--text-main); }
+.stats-row-head .stats-heading { margin: 0; }
+.stats-figure { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.stats-bar {
+  height: 10px;
+  overflow: hidden;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+}
+.stats-bar-thin { height: 7px; }
+.stats-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 0.4s var(--ease);
+}
+.stats-bar-fill.met { background: var(--success); }
+
+.stats-days { display: flex; align-items: flex-end; gap: var(--sp-1); height: 64px; }
+.stats-day {
+  flex: 1;
+  height: 3px;
+  background: var(--border-color);
+  border-radius: 3px 3px 0 0;
+  opacity: 0.6;
+}
+.stats-day.wrote { background: var(--accent); }
+.stats-day.met { background: var(--success); }
+.stats-day.today { opacity: 1; }
+.stats-days-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--sp-1);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.stats-days + .stats-days-axis + .hint { margin-top: var(--sp-1); }
+
+.stats-chapter { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: 6px; }
+.stats-chapter-name {
+  width: 180px;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.stats-chapter .stats-bar { flex: 1; }
+.stats-chapter-count {
+  width: 60px;
+  font-size: var(--fs-sm);
+  text-align: right;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-targets {
+  display: flex;
+  gap: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-color);
+}
+.stats-targets .input { width: 120px; }

@@ -1,12 +1,15 @@
-import { type Component, createEffect, createSignal, For, onMount, Show } from "solid-js";
+import { type Component, createEffect, createRoot, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { Send, Square, Trash2, Sparkles, Paperclip, X, Wrench, Database } from "lucide-solid";
+import { Send, Square, Trash2, Sparkles, Paperclip, X, BookOpen } from "lucide-solid";
 import { parseSceneHref, renderMarkdown } from "../../lib/markdown";
+import { invoke, onBackend } from "../../lib/rpc";
+import { project } from "../../stores/app";
+import { IconButton, Button } from "../ui";
+import "./AgentView.css";
 
-// Chronicler's writing agent panel. Chat streams token-by-token; the
-// model can call tools (RAG search, grep, codex, scene reads) and each call
-// shows up as a chip on the reply. Conversation state lives at module level
-// so switching panel tabs doesn't lose the thread.
+// The writing agent. Replies stream in; the agent looks things up (passages,
+// exact phrases, the codex, whole scenes) and each lookup shows as a chip.
+// The conversation belongs to the project and survives restarts.
 
 interface ToolUse {
   name: string;
@@ -21,9 +24,10 @@ interface ChatMsg {
   tools?: ToolUse[];
 }
 
-const [thread, setThread] = createStore<{ msgs: ChatMsg[]; runId: string | null }>({
+const [thread, setThread] = createStore<{ msgs: ChatMsg[]; runId: string | null; root: string | null }>({
   msgs: [],
   runId: null,
+  root: null,
 });
 
 let onThreadUpdate: (() => void) | null = null;
@@ -32,43 +36,45 @@ let onThreadUpdate: (() => void) | null = null;
 const [composerSeed, setComposerSeed] = createSignal<string | null>(null);
 export const seedComposer = (text: string) => setComposerSeed(text);
 
-// ---- Persistence: the thread survives restarts, per project (db KV) ----
-let loadedFor: string | null = null;
+// ---- Persistence, per project ----
+
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 
 const persistThread = () => {
+  const root = thread.root;
   clearTimeout(persistTimer);
   persistTimer = setTimeout(async () => {
+    if (!root || root !== project.root) return; // never write one book's chat into another
     try {
-      const msgs = thread.msgs.filter((m) => !m.streaming).map((m) => ({ ...m, tools: m.tools }));
-      await window.chronicler.invoke("db/set", { key: "agentThread", value: JSON.stringify(msgs) });
+      const msgs = thread.msgs.filter((m) => !m.streaming);
+      await invoke("db/set", { key: "agentThread", value: JSON.stringify(msgs) });
     } catch { /* backend restarting */ }
   }, 300);
 };
 
-const loadThread = async () => {
-  try {
-    const project = await window.chronicler.getProject();
-    if (!project.path || loadedFor === project.path) return;
-    loadedFor = project.path;
-    const res = await window.chronicler.invoke("db/get", { key: "agentThread" });
-    if (res.value) {
-      const msgs = JSON.parse(res.value);
-      if (Array.isArray(msgs)) setThread("msgs", msgs);
-    }
-  } catch { /* fresh thread */ }
-};
+createRoot(() => {
+  // Switch threads with the project.
+  createEffect(on(() => project.root, async (root) => {
+    clearTimeout(persistTimer);
+    setThread({ msgs: [], runId: null, root });
+    if (!root) return;
+    try {
+      const res = await invoke("db/get", { key: "agentThread" });
+      const msgs = res.value ? JSON.parse(res.value) : [];
+      if (Array.isArray(msgs) && thread.root === root) setThread("msgs", msgs);
+    } catch { /* fresh thread */ }
+  }));
+});
 
-/** Routed here from the app-level backend event listener. */
-export const handleRigEvent = (method: string, params: any) => {
+onBackend("agents/*", (params: { id?: string; method: string; text?: string; name?: string }) => {
   if (!params || params.id !== thread.runId) return;
   const idx = thread.msgs.length - 1;
   if (idx < 0 || thread.msgs[idx].role !== "assistant") return;
-  if (method === "agents/delta") {
+  if (params.method === "agents/delta") {
     setThread("msgs", idx, "content", (c) => c + (params.text ?? ""));
-  } else if (method === "agents/tool") {
-    setThread("msgs", idx, "tools", (t) => [...(t ?? []), { name: params.name, done: false }]);
-  } else if (method === "agents/tool_done") {
+  } else if (params.method === "agents/tool") {
+    setThread("msgs", idx, "tools", (t) => [...(t ?? []), { name: params.name!, done: false }]);
+  } else if (params.method === "agents/tool_done") {
     setThread("msgs", idx, "tools", (t) => {
       const list = [...(t ?? [])];
       const i = list.findIndex((x) => x.name === params.name && !x.done);
@@ -77,13 +83,34 @@ export const handleRigEvent = (method: string, params: any) => {
     });
   }
   onThreadUpdate?.();
-};
+});
 
 const TOOL_LABELS: Record<string, string> = {
-  search_manuscript: "searching manuscript",
-  grep_manuscript: "grepping",
-  query_codex: "checking codex",
-  read_scene: "reading scene",
+  search_manuscript: "finding passages",
+  grep_manuscript: "searching exact words",
+  query_codex: "checking the codex",
+  read_scene: "reading a scene",
+};
+
+/** Markdown for a reply; while streaming, re-rendered at most every 120ms. */
+const ReplyBody: Component<{ msg: ChatMsg; onClick: (e: MouseEvent) => void }> = (props) => {
+  const [html, setHtml] = createSignal(renderMarkdown(props.msg.content));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(on(() => props.msg.content, (content) => {
+    if (!props.msg.streaming) {
+      clearTimeout(timer);
+      timer = undefined;
+      setHtml(renderMarkdown(content));
+    } else if (!timer) {
+      timer = setTimeout(() => {
+        timer = undefined;
+        setHtml(renderMarkdown(props.msg.content));
+      }, 120);
+    }
+  }));
+  createEffect(on(() => props.msg.streaming, (s) => { if (!s) setHtml(renderMarkdown(props.msg.content)); }, { defer: true }));
+  onCleanup(() => clearTimeout(timer));
+  return <div class="agent-md" innerHTML={html()} onClick={props.onClick} />;
 };
 
 interface AgentViewProps {
@@ -102,72 +129,63 @@ export const AgentView: Component<AgentViewProps> = (props) => {
   const [attached, setAttached] = createSignal<string[]>([]);
   const [picking, setPicking] = createSignal(false);
   const [projectFiles, setProjectFiles] = createSignal<string[]>([]);
-  const [ragStatus, setRagStatus] = createSignal<{ indexedFiles: number; chunks: number; embedModel: string; currentModel: boolean } | null>(null);
+  const [reading, setReading] = createSignal<{ indexedFiles: number; chunks: number; currentModel: boolean } | null>(null);
   const [indexing, setIndexing] = createSignal(false);
   let scroller: HTMLDivElement | undefined;
-
-  const scrollDown = () => {
-    queueMicrotask(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight; });
-  };
-  onThreadUpdate = scrollDown;
-
-  const refreshRag = async () => {
-    try {
-      setRagStatus(await window.chronicler.invoke("agents/status"));
-    } catch { /* backend restarting */ }
-  };
   let composerRef: HTMLTextAreaElement | undefined;
 
-  onMount(() => {
-    refreshRag();
-    loadThread();
-  });
+  const scrollDown = () => queueMicrotask(() => { if (scroller) scroller.scrollTop = scroller.scrollHeight; });
+  onThreadUpdate = scrollDown;
+  onCleanup(() => { if (onThreadUpdate === scrollDown) onThreadUpdate = null; });
+
+  const refreshReading = async () => {
+    try {
+      setReading(await invoke("agents/status"));
+    } catch { /* backend restarting */ }
+  };
+
+  onMount(() => void refreshReading());
 
   createEffect(() => {
     const seed = composerSeed();
-    if (seed !== null) {
-      setDraft(seed);
-      setComposerSeed(null);
-      queueMicrotask(() => {
-        if (composerRef) {
-          composerRef.focus();
-          composerRef.setSelectionRange(composerRef.value.length, composerRef.value.length);
-        }
-      });
-    }
+    if (seed === null) return;
+    setDraft(seed);
+    setComposerSeed(null);
+    queueMicrotask(() => {
+      composerRef?.focus();
+      composerRef?.setSelectionRange(composerRef.value.length, composerRef.value.length);
+    });
   });
 
-  const runIndex = async () => {
+  const readBook = async () => {
     setIndexing(true);
-    props.onStatus("Agent: indexing manuscript...");
+    props.onStatus("The agent is reading the manuscript…");
     try {
-      const res = await window.chronicler.invoke("agents/index");
-      props.onStatus(`Agent: indexed ${res.chunks} passages across ${res.files} scenes`);
-    } catch (err: any) {
-      props.onStatus(`Agent index failed: ${err.message}`);
+      const res = await invoke("agents/index");
+      props.onStatus(`The agent has read ${res.files} scene(s)`);
+    } catch (err) {
+      props.onStatus(`Reading failed: ${err instanceof Error ? err.message : err}`);
     } finally {
       setIndexing(false);
-      refreshRag();
+      void refreshReading();
     }
   };
 
   const openPicker = async () => {
     setPicking(true);
     try {
-      const res = await window.chronicler.invoke("project/list_files");
-      setProjectFiles(
-        (res.files ?? []).filter((f: any) => !f.is_dir).map((f: any) => f.name as string)
-      );
-    } catch { setProjectFiles([]); }
+      const res = await invoke("project/list_files");
+      setProjectFiles(res.files.filter((f) => !f.isDir).map((f) => f.path));
+    } catch {
+      setProjectFiles([]);
+    }
   };
 
   const send = async () => {
     const text = draft().trim();
     if (!text || busy()) return;
     setDraft("");
-    const history = thread.msgs
-      .filter((m) => !m.error && m.content)
-      .map((m) => ({ role: m.role, content: m.content }));
+    const history = thread.msgs.filter((m) => !m.error && m.content).map((m) => ({ role: m.role, content: m.content }));
     const runId = Math.random().toString(36).slice(2);
     setThread("msgs", thread.msgs.length, { role: "user", content: text });
     const idx = thread.msgs.length;
@@ -180,18 +198,15 @@ export const AgentView: Component<AgentViewProps> = (props) => {
       const context = scene
         ? `The writer currently has the scene "${scene.file}" open in the editor:\n---\n${scene.content}\n---`
         : undefined;
-      const res = await window.chronicler.invoke("agents/chat", {
+      const res = await invoke("agents/chat", {
         id: runId,
         messages: [...history, { role: "user", content: text }],
         context,
         attach: attached(),
       });
-      setThread("msgs", idx, {
-        content: res.stopped && !res.text ? "*(stopped before replying)*" : res.text,
-        streaming: false,
-      });
-    } catch (err: any) {
-      setThread("msgs", idx, { content: err.message, error: true, streaming: false });
+      setThread("msgs", idx, { content: res.stopped && !res.text ? "*(stopped before replying)*" : res.text, streaming: false });
+    } catch (err) {
+      setThread("msgs", idx, { content: err instanceof Error ? err.message : String(err), error: true, streaming: false });
     } finally {
       setBusy(false);
       setThread("runId", null);
@@ -202,17 +217,7 @@ export const AgentView: Component<AgentViewProps> = (props) => {
 
   const stop = async () => {
     const id = thread.runId;
-    if (!id) return;
-    try {
-      await window.chronicler.invoke("agents/stop", { id });
-    } catch { /* already finished */ }
-  };
-
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (id) await invoke("agents/stop", { id }).catch(() => {});
   };
 
   const onMdClick = (e: MouseEvent) => {
@@ -221,72 +226,49 @@ export const AgentView: Component<AgentViewProps> = (props) => {
     e.preventDefault();
     const scene = parseSceneHref(a.getAttribute("href") ?? "");
     if (scene) props.onOpenScene(scene.path, scene.line);
-    // http(s) links stay inert: the panel shouldn't navigate the app
   };
 
-  const chip = {
-    display: "inline-flex", "align-items": "center", gap: "4px",
-    padding: "1px 7px", "border-radius": "9px", "font-size": "10.5px",
-    border: "1px solid var(--border-color)", color: "var(--text-muted)",
-  } as const;
-
   return (
-    <div style={{ display: "flex", "flex-direction": "column", height: "100%", "font-size": "12.5px" }}>
-      <div ref={scroller} style={{ flex: 1, "overflow-y": "auto", padding: "12px", display: "flex", "flex-direction": "column", gap: "10px" }}>
+    <div class="agent">
+      <div ref={scroller} class="agent-thread selectable">
         <Show when={thread.msgs.length === 0}>
-          <div style={{ color: "var(--text-faint)", "line-height": "1.6", padding: "4px" }}>
-            <Sparkles size={13} style={{ "vertical-align": "-2px", "margin-right": "5px" }} />
-            The agent can search your novel by meaning, grep it exactly, consult the codex, and read
-            scenes — then talk craft with the receipts in hand. Configure a provider in{" "}
-            <span onClick={props.onOpenSettings} style={{ color: "var(--accent)", cursor: "pointer" }}>Settings → AI</span>{" "}
-            and index the manuscript below.
+          <div class="agent-intro">
+            <Sparkles size={14} />
+            <p>
+              Ask about your book. The agent finds passages by meaning or exact words, checks the codex and reads
+              scenes — then talks craft with the evidence in hand. It never edits your text.
+            </p>
+            <p class="hint">
+              Set up a provider in <a href="#" onClick={(e) => { e.preventDefault(); props.onOpenSettings(); }}>Settings → AI</a>.
+            </p>
           </div>
         </Show>
         <For each={thread.msgs}>
           {(m) => (
-            <div style={{
-              "align-self": m.role === "user" ? "flex-end" : "flex-start",
-              "max-width": "92%",
-              background: m.role === "user" ? "var(--active-bg)" : "transparent",
-              border: m.role === "user" ? "none" : "1px solid var(--border-color)",
-              color: m.error ? "#e06c75" : "var(--text-main)",
-              "border-radius": "8px", padding: "7px 10px",
-              "line-height": "1.55", "user-select": "text",
-            }}>
+            <div class={`agent-msg agent-msg-${m.role}`} classList={{ error: !!m.error }}>
               <Show when={m.tools?.length}>
-                <div style={{ display: "flex", "flex-wrap": "wrap", gap: "5px", "margin-bottom": m.content ? "7px" : 0 }}>
+                <div class="agent-tools">
                   <For each={m.tools}>
-                    {(t) => (
-                      <span style={{ ...chip, opacity: t.done ? 0.75 : 1, color: t.done ? "var(--text-faint)" : "var(--accent)" }}>
-                        <Wrench size={10} /> {TOOL_LABELS[t.name] ?? t.name}{t.done ? "" : "…"}
-                      </span>
-                    )}
+                    {(t) => <span class="agent-tool" classList={{ done: t.done }}>{TOOL_LABELS[t.name] ?? t.name}{t.done ? "" : "…"}</span>}
                   </For>
                 </div>
               </Show>
-              <Show
-                when={m.role === "assistant" && !m.error}
-                fallback={<span style={{ "white-space": "pre-wrap" }}>{m.content}</span>}
-              >
-                <div class="agent-md" innerHTML={renderMarkdown(m.content)} onClick={onMdClick} />
+              <Show when={m.role === "assistant" && !m.error} fallback={<span class="agent-plain">{m.content}</span>}>
+                <ReplyBody msg={m} onClick={onMdClick} />
               </Show>
-              <Show when={m.streaming && !m.content}>
-                <span style={{ color: "var(--text-faint)" }}>thinking…</span>
-              </Show>
+              <Show when={m.streaming && !m.content}><span class="hint">thinking…</span></Show>
             </div>
           )}
         </For>
       </div>
 
-      <div style={{ "border-top": "1px solid var(--border-color)", padding: "10px 12px", "flex-shrink": 0 }}>
-        {/* Attached-file chips */}
+      <div class="agent-composer">
         <Show when={attached().length > 0}>
-          <div style={{ display: "flex", "flex-wrap": "wrap", gap: "5px", "margin-bottom": "7px" }}>
+          <div class="agent-tools">
             <For each={attached()}>
               {(f) => (
-                <span style={chip} title={f}>
-                  <Paperclip size={10} />
-                  <span style={{ "max-width": "150px", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{f.split("/").pop()}</span>
+                <span class="agent-tool" title={f}>
+                  <Paperclip size={10} /> {f.split("/").pop()!.replace(/\.md$/, "")}
                   <X size={10} style={{ cursor: "pointer" }} onClick={() => setAttached(attached().filter((x) => x !== f))} />
                 </span>
               )}
@@ -294,104 +276,64 @@ export const AgentView: Component<AgentViewProps> = (props) => {
           </div>
         </Show>
         <Show when={picking()}>
-          <div style={{ "margin-bottom": "7px", display: "flex", gap: "6px" }}>
-            <input
-              list="rig-attach-list" placeholder="Attach a scene by name..."
-              autofocus
-              onChange={(e) => {
-                const v = e.currentTarget.value;
-                if (projectFiles().includes(v) && !attached().includes(v)) {
-                  setAttached([...attached(), v]);
-                }
-                e.currentTarget.value = "";
-                setPicking(false);
-              }}
-              onKeyDown={(e) => { if (e.key === "Escape") setPicking(false); }}
-              style={{ flex: 1, background: "var(--bg-color)", border: "1px solid var(--border-color)", "border-radius": "6px", color: "var(--text-main)", padding: "5px 8px", "font-size": "12px", outline: "none" }}
-            />
-            <datalist id="rig-attach-list">
-              <For each={projectFiles().filter((f) => !attached().includes(f))}>{(f) => <option value={f} />}</For>
-            </datalist>
-          </div>
+          <input
+            class="input"
+            list="agent-attach-list"
+            placeholder="Attach a scene by name…"
+            ref={(el) => queueMicrotask(() => el.focus())}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              if (projectFiles().includes(v) && !attached().includes(v)) setAttached([...attached(), v]);
+              e.currentTarget.value = "";
+              setPicking(false);
+            }}
+            onKeyDown={(e) => { if (e.key === "Escape") setPicking(false); }}
+          />
+          <datalist id="agent-attach-list">
+            <For each={projectFiles().filter((f) => !attached().includes(f))}>{(f) => <option value={f} />}</For>
+          </datalist>
         </Show>
-
         <textarea
           ref={composerRef}
+          class="input agent-input"
           value={draft()}
           onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={onKey}
-          placeholder="Ask about your manuscript… (Enter to send)"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
+          placeholder="Ask about your manuscript…"
           rows={3}
-          style={{
-            width: "100%", resize: "none", background: "var(--bg-color)",
-            border: "1px solid var(--border-color)", "border-radius": "6px",
-            color: "var(--text-main)", padding: "8px", "font-size": "12.5px",
-            "font-family": "inherit", outline: "none", "box-sizing": "border-box",
-          }}
         />
-        <div style={{ display: "flex", "align-items": "center", gap: "8px", "margin-top": "6px" }}>
-          <label style={{ display: "flex", gap: "5px", "align-items": "center", color: "var(--text-muted)", cursor: "pointer", "font-size": "11.5px" }}>
+        <div class="agent-bar">
+          <label class="checkbox-row">
             <input type="checkbox" checked={attachScene()} onChange={(e) => setAttachScene(e.currentTarget.checked)} />
-            Current scene
+            Include this scene
           </label>
-          <Paperclip
-            size={14} color="var(--text-muted)" style={{ cursor: "pointer" }}
-            onClick={() => (picking() ? setPicking(false) : openPicker())}
-          />
+          <IconButton size="sm" label="Attach another scene" onClick={() => (picking() ? setPicking(false) : void openPicker())}>
+            <Paperclip size={13} />
+          </IconButton>
           <div style={{ flex: 1 }} />
           <Show when={thread.msgs.length > 0 && !busy()}>
-            <Trash2
-              size={14} color="var(--text-faint)" style={{ cursor: "pointer" }}
-              onClick={() => { setThread({ msgs: [], runId: null }); persistThread(); }}
-            />
+            <IconButton size="sm" label="Clear the conversation" onClick={() => { setThread({ msgs: [], runId: null }); persistThread(); }}>
+              <Trash2 size={13} />
+            </IconButton>
           </Show>
           <Show
             when={busy()}
-            fallback={
-              <button
-                onClick={send} disabled={!draft().trim()}
-                title="Send"
-                style={{
-                  display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
-                  background: "var(--accent)", color: "#fff", border: "none", "border-radius": "6px",
-                  cursor: "pointer", "font-size": "12px", opacity: !draft().trim() ? 0.5 : 1,
-                }}
-              >
-                <Send size={12} /> Send
-              </button>
-            }
+            fallback={<Button size="sm" variant="primary" disabled={!draft().trim()} onClick={() => void send()}><Send size={11} /> Send</Button>}
           >
-            <button
-              onClick={stop}
-              title="Stop the reply"
-              style={{
-                display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
-                background: "transparent", color: "var(--text-main)",
-                border: "1px solid var(--border-color)", "border-radius": "6px",
-                cursor: "pointer", "font-size": "12px",
-              }}
-            >
-              <Square size={11} fill="currentColor" /> Stop
-            </button>
+            <Button size="sm" onClick={() => void stop()}><Square size={10} fill="currentColor" /> Stop</Button>
           </Show>
         </div>
-
-        {/* RAG index status */}
-        <div style={{ display: "flex", "align-items": "center", gap: "6px", "margin-top": "8px", "font-size": "11px", color: "var(--text-faint)" }}>
-          <Database size={11} />
-          <Show when={ragStatus()} fallback={<span>index unavailable</span>}>
-            <span style={{ flex: 1, overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis" }}>
-              {ragStatus()!.chunks > 0
-                ? `knows ${ragStatus()!.indexedFiles} scenes (${ragStatus()!.chunks} passages)`
-                : "manuscript not indexed yet"}
-              {ragStatus()!.chunks > 0 && !ragStatus()!.currentModel ? " — embed model changed, reindex" : ""}
+        <div class="agent-reading">
+          <BookOpen size={11} />
+          <Show when={reading()} fallback={<span>Not connected</span>}>
+            <span class="agent-reading-text">
+              {reading()!.chunks > 0
+                ? `Has read ${reading()!.indexedFiles} scene${reading()!.indexedFiles === 1 ? "" : "s"}${reading()!.currentModel ? "" : " — search model changed, read again"}`
+                : "Hasn't read the manuscript yet"}
             </span>
-            <span
-              onClick={() => !indexing() && runIndex()}
-              style={{ color: "var(--accent)", cursor: "pointer", "flex-shrink": 0 }}
-            >
-              {indexing() ? "indexing…" : ragStatus()!.chunks > 0 ? "reindex" : "index now"}
-            </span>
+            <a href="#" onClick={(e) => { e.preventDefault(); if (!indexing()) void readBook(); }}>
+              {indexing() ? "reading…" : reading()!.chunks > 0 ? "Read again" : "Read it now"}
+            </a>
           </Show>
         </div>
       </div>

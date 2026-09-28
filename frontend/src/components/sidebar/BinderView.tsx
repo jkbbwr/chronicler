@@ -3,7 +3,9 @@ import { FileText, FolderPlus, FilePlus}  from "lucide-solid";
 import { BinderContextMenu } from "./BinderContextMenu";
 import { BinderTreeItem, type TreeNode } from "./BinderTreeItem";
 import { buildTree, ORDER_FILE, type FileEntry, type OrderMap } from "../../lib/binderTree";
-import { statusColor } from "../center/IndexCardsView";
+import { stats } from "../../stores/stats";
+import { IconButton } from "../ui";
+import "./BinderView.css";
 import { onCleanup, onMount } from "solid-js";
 
 interface BinderViewProps {
@@ -11,12 +13,19 @@ interface BinderViewProps {
   createTrigger?: "file" | "folder" | null;
   /** Bumped when the backend reports filesystem changes; triggers a refetch. */
   refreshVersion?: number;
+  /** Project title for the header; falls back to "Manuscript". */
+  projectName?: string;
+  /** Absolute project path, shown as the header's tooltip. */
+  projectPath?: string;
   onFileSelect: (filename: string) => void;
   onNewFile: (name: string) => Promise<void> | void;
   onNewFolder?: (name: string) => Promise<void> | void;
   onRename?: (oldName: string, newName: string) => Promise<void> | void;
   onDelete?: (name: string) => Promise<void> | void;
   onCheckContinuity?: (file: string) => void;
+  onMergeNext?: (file: string) => void;
+  /** Reveal a project-relative path ("" = the project root) in the file manager. */
+  onReveal?: (relPath: string) => void;
 }
 
 const basename = (p: string) => p.split("/").pop()!;
@@ -26,24 +35,22 @@ const fetchBinder = async () => {
   const res = await window.chronicler.invoke("project/list_files");
   let order: OrderMap = {};
   try {
-    const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
+    const o = await window.chronicler.invoke("document/read", { path: ORDER_FILE });
     order = JSON.parse(o.content);
   } catch {
     // No order file yet — fall back to dirs-first alphabetical
   }
-  const statusColors: Record<string, string> = {};
+  const statuses: Record<string, string> = {};
   try {
     const meta = await window.chronicler.invoke("meta/get_all");
-    for (const row of meta.meta) {
-      const color = statusColor(row.status);
-      if (row.status && color !== "transparent") statusColors[row.file] = color;
-    }
+    for (const row of meta.meta) if (row.status) statuses[row.file] = row.status;
   } catch { /* backend restarting */ }
-  return { files: res.files as FileEntry[], order, statusColors };
+  return { files: res.files as FileEntry[], order, statuses };
 };
 
 export const BinderView: Component<BinderViewProps> = (props) => {
   const [binder, { refetch }] = createResource(fetchBinder);
+  const wordsByFile = () => Object.fromEntries((stats()?.files ?? []).map((f) => [f.file, f.words]));
 
   const [creatingFile, setCreatingFile] = createSignal<string | false>(false);
   const [creatingFolder, setCreatingFolder] = createSignal<string | false>(false);
@@ -70,8 +77,7 @@ export const BinderView: Component<BinderViewProps> = (props) => {
 
   const saveOrder = async (order: OrderMap) => {
     try {
-      await window.chronicler.invoke("project/create_folder", { rel_path: ".chronicler" });
-      await window.chronicler.invoke("document/save", { rel_path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
+      await window.chronicler.invoke("document/save", { path: ORDER_FILE, content: JSON.stringify(order, null, 2) });
     } catch {
       // Ordering is a nicety; never block the move itself on it
     }
@@ -222,42 +228,39 @@ export const BinderView: Component<BinderViewProps> = (props) => {
   };
 
   return (
-    <div class="binder-view" style={{ display: "flex", "flex-direction": "column", height: "100%" }}>
-      <div style={{ padding: "10px 15px", display: "flex", "justify-content": "space-between", "align-items": "center" }}>
-        <span style={{ "font-size": "11px", "font-weight": 600, "text-transform": "uppercase", color: "var(--text-muted)", "letter-spacing": "0.5px" }}>Manuscript</span>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            onClick={() => startCreate("file")}
-            style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
-            title="New File (Cmd+N)"
-          >
-            <FilePlus size={14} strokeWidth={2} />
-          </button>
-          <button
-            onClick={() => startCreate("folder")}
-            style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
-            title="New Folder (Cmd+Shift+N)"
-          >
-            <FolderPlus size={14} strokeWidth={2} />
-          </button>
-        </div>
+    <div class="binder-view">
+      <div class="binder-header">
+        <span
+          class="binder-title"
+          title={props.projectPath}
+          onContextMenu={(e) => { e.preventDefault(); handleContextMenu(e, "", true); }}
+        >
+          {props.projectName || "Manuscript"}
+        </span>
+        <IconButton size="sm" label="New scene (⌘N)" onClick={() => startCreate("file")}>
+          <FilePlus size={14} />
+        </IconButton>
+        <IconButton size="sm" label="New chapter folder (⌘⇧N)" onClick={() => startCreate("folder")}>
+          <FolderPlus size={14} />
+        </IconButton>
       </div>
 
       <div
-        class="file-list"
-        style={{ "overflow-y": "auto", flex: 1, padding: "5px 0" }}
+        class="binder-list"
         onDragOver={handleDragOver}
         onDrop={handleDropOnRoot}
+        onContextMenu={(e) => { e.preventDefault(); handleContextMenu(e, "", true); }}
       >
-        {binder.loading && <div style={{ padding: "5px 15px", color: "var(--text-muted)", "font-size": "12px" }}>Loading...</div>}
+        {binder.loading && !binder.latest && <div class="hint binder-hint">Loading…</div>}
 
-        {buildTree(binder()?.files || [], binder()?.order || {}).map(node => (
+        {buildTree(binder.latest?.files || [], binder.latest?.order || {}).map(node => (
           <BinderTreeItem
             node={node}
             depth={0}
             activeFile={props.activeFile}
             renamingItem={renamingItem()}
-            statusColors={binder()?.statusColors}
+            statuses={binder.latest?.statuses}
+            words={wordsByFile()}
             onSelect={props.onFileSelect}
             onContextMenu={handleContextMenu}
             onRenameKeyDown={handleRenameKeyDown}
@@ -268,24 +271,14 @@ export const BinderView: Component<BinderViewProps> = (props) => {
         ))}
 
         <Show when={creatingFile() !== false || creatingFolder() !== false}>
-          <div style={{ padding: "4px 15px", display: "flex", "align-items": "center", gap: "8px" }}>
-            {creatingFile() !== false ? <FileText size={12} color="var(--text-muted)" /> : <FolderPlus size={12} color="var(--text-muted)" />}
+          <div class="binder-row binder-creating">
+            {creatingFile() !== false ? <FileText size={13} class="binder-icon" /> : <FolderPlus size={13} class="binder-icon" />}
             <input
               id="binder-new-input"
-              type="text"
-              placeholder={creatingFile() !== false ? `${creatingFile() ? creatingFile() + '/' : ''}Filename...` : `${creatingFolder() ? creatingFolder() + '/' : ''}Folder name...`}
+              class="input binder-input"
+              placeholder={creatingFile() !== false ? `${creatingFile() ? creatingFile() + '/' : ''}Scene title…` : `${creatingFolder() ? creatingFolder() + '/' : ''}Chapter name…`}
               onKeyDown={handleInputKeyDown}
               onBlur={() => { setCreatingFile(false); setCreatingFolder(false); }}
-              style={{
-                flex: 1,
-                background: "var(--bg-color)",
-                border: "1px solid var(--border-color)",
-                color: "var(--text-main)",
-                "font-size": "12px",
-                padding: "4px 6px",
-                outline: "none",
-                "border-radius": "4px"
-              }}
             />
           </div>
         </Show>
@@ -300,7 +293,9 @@ export const BinderView: Component<BinderViewProps> = (props) => {
           onClose={() => setContextMenu(null)}
           onRename={startRename}
           onDelete={handleDelete}
-            onCheckContinuity={props.onCheckContinuity}
+          onCheckContinuity={props.onCheckContinuity}
+          onMergeNext={props.onMergeNext}
+          onReveal={props.onReveal}
           onNewFile={(folderPath) => startCreate("file", folderPath)}
           onNewFolder={(folderPath) => startCreate("folder", folderPath)}
         />

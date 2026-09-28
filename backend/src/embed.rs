@@ -1,6 +1,7 @@
+use crate::app::App;
 use crate::db;
+use crate::fsx::is_matter_path;
 use anyhow::{Context, Result};
-use std::path::Path;
 
 // Manuscript RAG index. Scenes are chunked into paragraph groups, embedded
 // through the configured provider (OpenRouter or any OpenAI-compatible
@@ -74,13 +75,21 @@ pub fn chunk_text(content: &str) -> Vec<Chunk> {
         chunks.push(Chunk {
             start_line: group[0].start,
             end_line: group[group.len() - 1].end,
-            text: group.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("\n\n"),
+            text: group
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
         });
         if end_para >= paras.len() {
             break;
         }
         // Overlap: step back one paragraph unless that would stall
-        i = if end_para - start_para > 1 { end_para - 1 } else { end_para };
+        i = if end_para - start_para > 1 {
+            end_para - 1
+        } else {
+            end_para
+        };
     }
     chunks
 }
@@ -90,85 +99,122 @@ fn vec_to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn blob_to_vec(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
-/// (Re)index the given files: delete their rows, chunk, embed via the
-/// provider, insert. Returns the number of chunks written.
-pub async fn index_files(root: &Path, files: &[String]) -> Result<usize> {
-    let mut written = 0usize;
+struct Embedded {
+    file: String,
+    chunks: Vec<(Chunk, Vec<f32>)>,
+}
+
+/// Chunk and embed files through the provider. Nothing is written here, so
+/// a failed network call never costs the existing index anything.
+async fn embed_files(app: &App, files: &[String]) -> Result<Vec<Embedded>> {
+    let mut out = Vec::new();
     for rel in files {
-        if crate::is_matter_path(rel) {
+        if is_matter_path(rel) {
             continue;
         }
-        {
-            let conn = db::open(root)?;
-            conn.execute("DELETE FROM embeddings WHERE file = ?1", [rel.as_str()])?;
-        }
-        let path = match crate::resolve_path(root, rel) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue, // deleted since listing — rows already cleared
+        let Ok(content) = std::fs::read_to_string(app.root.join(rel)) else {
+            continue;
         };
         let chunks = chunk_text(&content);
-        if chunks.is_empty() {
-            continue;
-        }
-        let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let vectors = crate::agents::embed_texts(root, texts)
-            .await
-            .with_context(|| format!("embedding {}", rel))?;
-        let conn = db::open(root)?;
-        for (idx, (chunk, vector)) in chunks.iter().zip(vectors.iter()).enumerate() {
-            conn.execute(
-                "INSERT INTO embeddings (file, chunk, start_line, end_line, text, vector)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    rel,
-                    idx as i64,
-                    chunk.start_line as i64,
-                    chunk.end_line as i64,
-                    chunk.text,
-                    vec_to_blob(vector)
-                ],
-            )?;
+        let vectors = if chunks.is_empty() {
+            vec![]
+        } else {
+            let texts = chunks.iter().map(|c| c.text.clone()).collect();
+            crate::agents::embed_texts(app, texts)
+                .await
+                .with_context(|| format!("embedding {rel}"))?
+        };
+        out.push(Embedded {
+            file: rel.clone(),
+            chunks: chunks.into_iter().zip(vectors).collect(),
+        });
+    }
+    Ok(out)
+}
+
+fn store(tx: &rusqlite::Transaction, batch: &[Embedded]) -> Result<usize> {
+    let mut del = tx.prepare("DELETE FROM embeddings WHERE file = ?1")?;
+    let mut ins = tx.prepare(
+        "INSERT INTO embeddings (file, chunk, start_line, end_line, text, vector)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut written = 0;
+    for e in batch {
+        del.execute([&e.file])?;
+        for (idx, (chunk, vector)) in e.chunks.iter().enumerate() {
+            ins.execute(rusqlite::params![
+                e.file,
+                idx as i64,
+                chunk.start_line as i64,
+                chunk.end_line as i64,
+                chunk.text,
+                vec_to_blob(vector)
+            ])?;
             written += 1;
         }
     }
     Ok(written)
 }
 
-/// Full reindex: wipe everything (an embed-model switch invalidates old
-/// vectors), then index every scene. Returns (files, chunks).
-pub async fn reindex_all(root: &Path) -> Result<(usize, usize)> {
-    let files = crate::list_md_files(root);
-    {
-        let conn = db::open(root)?;
-        conn.execute("DELETE FROM embeddings", [])?;
+/// Re-embed the given files, replacing each file's rows only once its new
+/// vectors are in hand. Returns chunks written.
+pub async fn index_files(app: &App, files: &[String]) -> Result<usize> {
+    let mut written = 0;
+    for rel in files {
+        let batch = embed_files(app, std::slice::from_ref(rel)).await?;
+        written += app.db.tx(|tx| store(tx, &batch))?;
     }
-    let chunks = index_files(root, &files).await?;
-    db::set_setting(root, "embedModelUsed", &crate::agents::embed_model_name(root)?)?;
-    Ok((files.len(), chunks))
+    Ok(written)
+}
+
+/// Full reindex (an embed-model switch invalidates old vectors): embed
+/// every scene first, then swap the whole index in one transaction.
+/// Returns (files, chunks).
+pub async fn reindex_all(app: &App) -> Result<(usize, usize)> {
+    let files = app.md_files();
+    let model = crate::agents::embed_model_name(app)?;
+    let batch = embed_files(app, &files).await?;
+    let chunks = app.db.tx(|tx| {
+        tx.execute("DELETE FROM embeddings", [])?;
+        let n = store(tx, &batch)?;
+        db::set_setting(tx, "embedModelUsed", &model)?;
+        Ok(n)
+    })?;
+    Ok((batch.len(), chunks))
 }
 
 /// Incremental indexing is only safe while the configured embedding model
 /// matches the one the index was built with.
-pub fn index_is_current_model(root: &Path) -> bool {
-    match (db::get_setting(root, "embedModelUsed"), crate::agents::embed_model_name(root)) {
+pub fn index_is_current_model(app: &App) -> bool {
+    match (
+        app.db.get_setting("embedModelUsed"),
+        crate::agents::embed_model_name(app),
+    ) {
         (Ok(Some(used)), Ok(configured)) => used == configured,
         _ => false,
     }
 }
 
-pub fn stats(root: &Path) -> Result<(usize, usize)> {
-    let conn = db::open(root)?;
-    let chunks: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))?;
-    let files: i64 =
-        conn.query_row("SELECT COUNT(DISTINCT file) FROM embeddings", [], |r| r.get(0))?;
-    Ok((files as usize, chunks as usize))
+/// Is there an index worth keeping fresh?
+pub fn is_live(app: &App) -> bool {
+    stats(app).map(|(_, chunks)| chunks > 0).unwrap_or(false) && index_is_current_model(app)
+}
+
+/// (files, chunks) in the index.
+pub fn stats(app: &App) -> Result<(usize, usize)> {
+    app.db.with(|conn| {
+        let chunks: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))?;
+        let files: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT file) FROM embeddings", [], |r| {
+                r.get(0)
+            })?;
+        Ok((files as usize, chunks as usize))
+    })
 }
 
 pub struct Hit {
@@ -181,36 +227,44 @@ pub struct Hit {
 
 /// Semantic search: embed the query, dot-product against every stored chunk
 /// (vectors are normalized at write time, so dot product = cosine).
-pub async fn search(root: &Path, query: &str, limit: usize) -> Result<Vec<Hit>> {
-    let query_vec = crate::agents::embed_texts(root, vec![query.to_string()])
+pub async fn search(app: &App, query: &str, limit: usize) -> Result<Vec<Hit>> {
+    let query_vec = crate::agents::embed_texts(app, vec![query.to_string()])
         .await
         .context("embedding query")?
         .into_iter()
         .next()
         .context("provider returned no query embedding")?;
-    let conn = db::open(root)?;
-    let mut stmt =
-        conn.prepare("SELECT file, start_line, end_line, text, vector FROM embeddings")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, i64>(1)?,
-            r.get::<_, i64>(2)?,
-            r.get::<_, String>(3)?,
-            r.get::<_, Vec<u8>>(4)?,
-        ))
-    })?;
-    let mut hits: Vec<Hit> = Vec::new();
-    for row in rows {
-        let (file, start, end, text, blob) = row?;
-        let v = blob_to_vec(&blob);
-        if v.len() != query_vec.len() {
-            continue; // stale rows from a different embedding model
+    let mut hits = app.db.with(|conn| {
+        let mut stmt =
+            conn.prepare("SELECT file, start_line, end_line, text, vector FROM embeddings")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Vec<u8>>(4)?,
+            ))
+        })?;
+        let mut hits = Vec::new();
+        for row in rows {
+            let (file, start, end, text, blob) = row?;
+            let v = blob_to_vec(&blob);
+            if v.len() != query_vec.len() {
+                continue; // stale rows from a different embedding model
+            }
+            let score: f32 = v.iter().zip(&query_vec).map(|(a, b)| a * b).sum();
+            hits.push(Hit {
+                file,
+                start_line: start as usize,
+                end_line: end as usize,
+                text,
+                score,
+            });
         }
-        let score: f32 = v.iter().zip(&query_vec).map(|(a, b)| a * b).sum();
-        hits.push(Hit { file, start_line: start as usize, end_line: end as usize, text, score });
-    }
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(hits)
+    })?;
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
     hits.truncate(limit);
     Ok(hits)
 }
@@ -221,14 +275,19 @@ mod tests {
 
     #[test]
     fn chunking_covers_and_overlaps() {
-        let paras: Vec<String> =
-            (0..10).map(|i| format!("Paragraph {} with some words repeated here.", i)).collect();
+        let paras: Vec<String> = (0..10)
+            .map(|i| format!("Paragraph {} with some words repeated here.", i))
+            .collect();
         let doc = paras.join("\n\n");
         let chunks = chunk_text(&doc);
         assert!(!chunks.is_empty());
         // Every paragraph appears in at least one chunk
         for p in &paras {
-            assert!(chunks.iter().any(|c| c.text.contains(p.as_str())), "missing {}", p);
+            assert!(
+                chunks.iter().any(|c| c.text.contains(p.as_str())),
+                "missing {}",
+                p
+            );
         }
         // Line ranges are sane and 1-based
         assert_eq!(chunks[0].start_line, 1);

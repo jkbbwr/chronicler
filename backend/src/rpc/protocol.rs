@@ -1,51 +1,51 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcRequest {
-    pub jsonrpc: String,
-    pub id: serde_json::Value,
+/// An incoming JSON-RPC request. `jsonrpc` is not enforced; a missing id is
+/// answered with a null id.
+#[derive(Debug, Deserialize)]
+pub struct Request {
+    #[serde(default)]
+    pub id: Value,
     pub method: String,
     #[serde(default)]
-    pub params: serde_json::Value,
+    pub params: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: String,
-    pub id: serde_json::Value,
+#[derive(Debug, Serialize)]
+pub struct Response {
+    pub jsonrpc: &'static str,
+    pub id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
+    pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcError>,
+    pub error: Option<ErrorObject>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcError {
+#[derive(Debug, Serialize)]
+pub struct ErrorObject {
     pub code: i32,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
 }
 
-impl JsonRpcResponse {
-    pub fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
-        Self {
-            jsonrpc: "2.0".into(),
+impl Response {
+    pub fn success(id: Value, result: Value) -> Self {
+        Response {
+            jsonrpc: "2.0",
             id,
             result: Some(result),
             error: None,
         }
     }
 
-    pub fn error(id: serde_json::Value, code: i32, message: impl Into<String>) -> Self {
-        Self {
-            jsonrpc: "2.0".into(),
+    pub fn error(id: Value, err: super::RpcError) -> Self {
+        Response {
+            jsonrpc: "2.0",
             id,
             result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.into(),
-                data: None,
+            error: Some(ErrorObject {
+                code: err.code,
+                message: err.message,
             }),
         }
     }

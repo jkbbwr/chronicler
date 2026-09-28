@@ -1,0 +1,84 @@
+/* Story timeline. Each event carries --tl-color (set inline from its reading
+   position: cool early, warm late); flashbacks use --ai instead. */
+.tl-view { display: flex; flex-direction: column; height: 100%; }
+
+.tl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) 0;
+}
+.tl-toolbar-icon { color: var(--text-muted); }
+.tl-title { font-size: var(--fs-md); font-weight: 600; color: var(--text-main); }
+.tl-built { font-size: var(--fs-xs); color: var(--text-faint); }
+.tl-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.tl-flash-icon { flex-shrink: 0; color: var(--ai); }
+.tl-spinning { animation: tl-spin 1s linear infinite; }
+@keyframes tl-spin { to { transform: rotate(360deg); } }
+
+.tl-empty { flex: 1; }
+.tl-empty p { max-width: 420px; margin: 0; }
+.tl-empty svg { opacity: 0.4; }
+
+.tl-scroll { position: relative; flex: 1; overflow-x: auto; overflow-y: hidden; }
+.tl-canvas { position: relative; height: 100%; min-height: 420px; }
+.tl-svg { position: absolute; inset: 0; }
+
+.tl-stop-early { stop-color: var(--info); }
+.tl-stop-late { stop-color: var(--warning); }
+.tl-spine {
+  stroke-dasharray: 4000;
+  stroke-dashoffset: 4000;
+  animation: tl-draw 1.1s ease-out forwards;
+}
+@keyframes tl-draw { to { stroke-dashoffset: 0; } }
+
+.tl-node { opacity: 0; animation: tl-fade 0.45s ease-out forwards; }
+.tl-connector { stroke: var(--tl-color); stroke-opacity: 0.55; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.tl-dot { fill: var(--bg-color); stroke: var(--tl-color); stroke-width: 2.5; }
+@keyframes tl-fade { to { opacity: 1; } }
+
+.tl-card {
+  position: absolute;
+  padding: 10px var(--sp-3);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-top: 3px solid var(--tl-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 8px var(--overlay);
+  opacity: 0;
+  transform: translateY(8px);
+  animation: tl-rise 0.5s ease-out forwards;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.tl-card:hover { z-index: 10; transform: translateY(0) scale(1.025); box-shadow: var(--shadow-pop); }
+@keyframes tl-rise { to { opacity: 1; transform: translateY(0); } }
+
+.tl-card-head { display: flex; align-items: baseline; gap: 6px; }
+.tl-when {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tl-color);
+}
+.tl-what { margin: 5px 0 var(--sp-2); font-size: var(--fs-sm); line-height: 1.5; color: var(--text-main); }
+.tl-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.tl-chip {
+  padding: 1px var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.tl-chip:hover { color: var(--accent); border-color: var(--accent); }

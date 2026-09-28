@@ -1,7 +1,5 @@
-import { type Component
-} from "solid-js";
-import { Folder, FolderOpen, FileText } from "lucide-solid";
-import { createSignal } from "solid-js";
+import { type Component, createSignal, For, Show } from "solid-js";
+import { ChevronRight, FileText } from "lucide-solid";
 
 export interface TreeNode {
   path: string;
@@ -15,8 +13,10 @@ export interface TreeItemProps {
   depth: number;
   activeFile: string;
   renamingItem: string | null;
-  /** Scene status color by path ("" or missing = no dot). */
-  statusColors?: Record<string, string>;
+  /** Scene status id by path ("idea" | "draft" | "revised" | "final"). */
+  statuses?: Record<string, string>;
+  /** Word count by path. */
+  words?: Record<string, number>;
   onSelect: (path: string) => void;
   onContextMenu: (e: MouseEvent, path: string, is_dir: boolean) => void;
   onRenameKeyDown: (e: KeyboardEvent & { currentTarget: HTMLInputElement }, oldPath: string) => void;
@@ -29,120 +29,94 @@ export interface TreeItemProps {
 const dropBefore = (e: DragEvent, el: HTMLElement) =>
   e.clientY - el.getBoundingClientRect().top < el.getBoundingClientRect().height / 2;
 
-export const BinderTreeItem: Component<TreeItemProps> = (props) => {
-  const [isOpen, setIsOpen] = createSignal(false);
-  
-  const isRenaming = () => props.renamingItem === props.node.path;
+const fmtWords = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
 
-  const handleClick = (e: MouseEvent) => {
-    e.stopPropagation();
-    if (props.node.is_dir) {
-      setIsOpen(!isOpen());
-    } else {
-      props.onSelect(props.node.path);
-    }
-  };
+/** Folder word totals, for chapter rows. */
+const totalWords = (node: TreeNode, words: Record<string, number>): number =>
+  node.is_dir ? node.children.reduce((sum, c) => sum + totalWords(c, words), 0) : words[node.path] ?? 0;
+
+export const BinderTreeItem: Component<TreeItemProps> = (props) => {
+  // Chapters start open: the binder is the manuscript's table of contents.
+  const [isOpen, setIsOpen] = createSignal(true);
+  const [drop, setDrop] = createSignal<"before" | "after" | "into" | null>(null);
+  const isActive = () => !props.node.is_dir && props.activeFile === props.node.path;
+  const label = () => props.node.name.replace(/\.md$/, "");
+  const words = () => (props.words ? totalWords(props.node, props.words) : 0);
 
   return (
     <div>
       <div
+        class="binder-row"
+        classList={{ active: isActive(), folder: props.node.is_dir }}
+        data-drop={drop() ?? undefined}
+        style={{ "padding-left": `${8 + props.depth * 14}px` }}
         draggable={true}
         onDragStart={(e) => props.onDragStart(e, props.node.path)}
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          const el = e.currentTarget;
-          if (dropBefore(e, el)) {
-            el.style.boxShadow = "inset 0 2px 0 var(--accent)";
-            el.style.backgroundColor = "";
-          } else {
-            el.style.boxShadow = props.node.is_dir ? "" : "inset 0 -2px 0 var(--accent)";
-            el.style.backgroundColor = props.node.is_dir ? "var(--active-bg)" : "";
-          }
+          setDrop(dropBefore(e, e.currentTarget) ? "before" : props.node.is_dir ? "into" : "after");
         }}
-        onDragLeave={(e) => {
-          e.currentTarget.style.boxShadow = "";
-          e.currentTarget.style.backgroundColor = "";
-        }}
+        onDragLeave={() => setDrop(null)}
         onDrop={(e) => {
-          const el = e.currentTarget;
-          const before = dropBefore(e, el);
-          el.style.boxShadow = "";
-          el.style.backgroundColor = "";
+          const before = dropBefore(e, e.currentTarget);
+          setDrop(null);
           props.onDropOnItem(e, props.node, before);
         }}
-        class={`file-item ${props.activeFile === props.node.path && !props.node.is_dir ? "active" : ""}`}
-        onClick={handleClick}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (props.node.is_dir) setIsOpen(!isOpen());
+          else props.onSelect(props.node.path);
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
           props.onContextMenu(e, props.node.path, props.node.is_dir);
         }}
-        style={{
-          padding: `6px 15px 6px ${15 + props.depth * 15}px`,
-          display: "flex",
-          "align-items": "center",
-          gap: "8px",
-          cursor: "pointer",
-          background: (props.activeFile === props.node.path && !props.node.is_dir) ? "var(--active-bg)" : "transparent",
-          color: (props.activeFile === props.node.path && !props.node.is_dir) ? "var(--text-main)" : "var(--text-muted)",
-          "font-size": "13px",
-          transition: "background 0.15s, color 0.15s",
-          "border-radius": "4px",
-          margin: "0 8px 2px 8px"
-        }}
-        onMouseEnter={e => { if (props.activeFile !== props.node.path) { e.currentTarget.style.backgroundColor = "var(--hover-bg)"; e.currentTarget.style.color = "var(--text-main)"; } }}
-        onMouseLeave={e => { if (props.activeFile !== props.node.path) { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = "var(--text-muted)"; } }}
+        title={props.node.path}
       >
-        {props.node.is_dir 
-          ? (isOpen() ? <FolderOpen size={12} strokeWidth={1.5} style={{ opacity: 0.8 }} /> : <Folder size={12} strokeWidth={1.5} style={{ opacity: 0.6 }} />)
-          : <FileText size={12} strokeWidth={1.5} style={{ opacity: props.activeFile === props.node.path ? 1 : 0.6 }} />
-        }
-        
-        {isRenaming() ? (
+        <Show when={props.node.is_dir} fallback={<FileText size={13} class="binder-icon" />}>
+          <ChevronRight size={13} class="binder-chevron" classList={{ open: isOpen() }} />
+        </Show>
+        <Show
+          when={props.renamingItem === props.node.path}
+          fallback={<span class="binder-label">{label()}</span>}
+        >
           <input
             id="binder-rename-input"
-            type="text"
-            value={props.node.name.replace(/\.md$/, "")}
+            class="input binder-input"
+            value={label()}
             onKeyDown={(e) => props.onRenameKeyDown(e, props.node.path)}
             onBlur={props.onRenameBlur}
-            onClick={e => e.stopPropagation()}
-            style={{
-              flex: 1,
-              background: "var(--bg-color)",
-              border: "1px solid var(--border-color)",
-              color: "var(--text-main)",
-              "font-size": "12px",
-              padding: "4px 6px",
-              outline: "none",
-              "border-radius": "4px"
-            }}
+            onClick={(e) => e.stopPropagation()}
           />
-        ) : (
-          <span style={{ "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis", "font-weight": props.node.is_dir ? 500 : 400, flex: 1 }}>
-            {props.node.name.replace(/\.md$/, "")}
-          </span>
-        )}
-        {!props.node.is_dir && props.statusColors?.[props.node.path] && (
-          <span style={{ width: "7px", height: "7px", "border-radius": "50%", "flex-shrink": 0, background: props.statusColors[props.node.path] }} />
-        )}
+        </Show>
+        <Show when={words() > 0}><span class="binder-words">{fmtWords(words())}</span></Show>
+        <Show when={!props.node.is_dir}>
+          <span class="status-dot" data-status={props.statuses?.[props.node.path] ?? ""} />
+        </Show>
       </div>
 
-      {props.node.is_dir && isOpen() && props.node.children.map(child => (
-        <BinderTreeItem
-          node={child}
-          depth={props.depth + 1}
-          activeFile={props.activeFile}
-          renamingItem={props.renamingItem}
-          statusColors={props.statusColors}
-          onSelect={props.onSelect}
-          onContextMenu={props.onContextMenu}
-          onRenameKeyDown={props.onRenameKeyDown}
-          onRenameBlur={props.onRenameBlur}
-          onDragStart={props.onDragStart}
-          onDropOnItem={props.onDropOnItem}
-        />
-      ))}
+      <Show when={props.node.is_dir && isOpen()}>
+        <For each={props.node.children}>
+          {(child) => (
+            <BinderTreeItem
+              node={child}
+              depth={props.depth + 1}
+              activeFile={props.activeFile}
+              renamingItem={props.renamingItem}
+              statuses={props.statuses}
+              words={props.words}
+              onSelect={props.onSelect}
+              onContextMenu={props.onContextMenu}
+              onRenameKeyDown={props.onRenameKeyDown}
+              onRenameBlur={props.onRenameBlur}
+              onDragStart={props.onDragStart}
+              onDropOnItem={props.onDropOnItem}
+            />
+          )}
+        </For>
+      </Show>
     </div>
   );
 };

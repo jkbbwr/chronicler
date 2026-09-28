@@ -1,7 +1,12 @@
 import { type Component, createResource, createSignal, For, Show } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { Maximize2, Minimize2 } from "lucide-solid";
-import { workbench, setWorkbench } from "../../stores/workbench";
+import { Sparkles } from "lucide-solid";
+import { stats } from "../../stores/stats";
+import { detailsFor, sceneOrder, threadColor, threads } from "../../stores/story";
+import { entities } from "../../stores/codex";
+import { draftSynopses } from "../../lib/agentActions";
+import { Button, Empty } from "../ui";
+import "./IndexCardsView.css";
 import {
   buildTree,
   buildCompileChapters,
@@ -15,15 +20,12 @@ import {
 // Synopses live in the project db (scene_meta), not the prose files.
 
 export const STATUSES = [
-  { id: "", label: "No status", color: "transparent" },
-  { id: "idea", label: "Idea", color: "#8b949e" },
-  { id: "draft", label: "Draft", color: "#e5c07b" },
-  { id: "revised", label: "Revised", color: "#61afef" },
-  { id: "final", label: "Final", color: "#98c379" },
+  { id: "", label: "No status" },
+  { id: "idea", label: "Idea" },
+  { id: "draft", label: "Draft" },
+  { id: "revised", label: "Revised" },
+  { id: "final", label: "Final" },
 ];
-
-export const statusColor = (id: string) =>
-  STATUSES.find((s) => s.id === id)?.color ?? "transparent";
 
 interface SceneMeta {
   synopsis: string;
@@ -43,14 +45,15 @@ const sceneName = (path: string) => chapterName(path.split("/").pop()!.replace(/
 export const IndexCardsView: Component<IndexCardsProps> = (props) => {
   const [meta, setMeta] = createStore<Record<string, SceneMeta>>({});
 
+  // Wrapped: a bare version number of 0 is falsy and would never fetch.
   const [chapters, { refetch }] = createResource(
-    () => props.refreshVersion,
+    () => ({ v: props.refreshVersion }),
     async () => {
       try {
         const res = await window.chronicler.invoke("project/list_files");
         let order: OrderMap = {};
         try {
-          const o = await window.chronicler.invoke("document/read", { rel_path: ORDER_FILE });
+          const o = await window.chronicler.invoke("document/read", { path: ORDER_FILE });
           order = JSON.parse(o.content);
         } catch { /* no order file yet */ }
         const metaRes = await window.chronicler.invoke("meta/get_all");
@@ -76,7 +79,7 @@ export const IndexCardsView: Component<IndexCardsProps> = (props) => {
       const merged = pending.get(file);
       pending.delete(file);
       try {
-        await window.chronicler.invoke("meta/set", { file, ...merged });
+        await window.chronicler.invoke("meta/set", { path: file, ...merged });
         props.onMetaChanged();
       } catch (err: any) {
         props.onStatus(`Saving scene details failed: ${err.message}`);
@@ -85,93 +88,114 @@ export const IndexCardsView: Component<IndexCardsProps> = (props) => {
   };
 
   const [drafting, setDrafting] = createSignal(false);
+  // Through the shared action, so the writer sees what it costs first.
   const draftMissing = async () => {
     setDrafting(true);
-    props.onStatus("Agent: drafting synopses for scenes without one...");
     try {
-      const res = await window.chronicler.invoke("agents/synopses", {});
-      props.onStatus(`Drafted ${res.drafted} synopsis(es)`);
-      props.onMetaChanged();
-    } catch (err: any) {
-      props.onStatus(`Synopsis drafting failed: ${err.message}`);
+      await draftSynopses();
     } finally {
       setDrafting(false);
       refetch();
     }
   };
 
+  const words = () => Object.fromEntries((stats()?.files ?? []).map((f) => [f.file, f.words]));
+
+  // Filters: point of view, location, thread, status ("" = any).
+  const [filter, setFilter] = createStore({ pov: 0, location: 0, thread: 0, status: "" });
+  const filtering = () => !!(filter.pov || filter.location || filter.thread || filter.status);
+  const shown = (file: string) => {
+    const d = detailsFor(file);
+    return (!filter.pov || d.pov === filter.pov)
+      && (!filter.location || d.location === filter.location)
+      && (!filter.thread || d.threads.includes(filter.thread))
+      && (!filter.status || (meta[file]?.status ?? "") === filter.status);
+  };
+  const entityName = (id: number | null) => (id ? (entities.latest ?? []).find((e) => e.id === id)?.name : undefined);
+  const used = (key: "pov" | "location") =>
+    [...new Set(sceneOrder().map((f) => detailsFor(f)[key]).filter((id): id is number => !!id))]
+      .map((id) => ({ id, name: entityName(id) ?? "?" }));
+
   return (
-    <div style={{ height: "100%", "overflow-y": "auto", padding: "24px 32px" }}>
-      <div style={{ display: "flex", "justify-content": "flex-end", gap: "8px", "margin-bottom": "12px" }}>
-        <button
-          onClick={() => setWorkbench("zenMode", (z) => !z)}
-          title={workbench.zenMode ? "Exit full screen" : "Full screen"}
-          style={{ display: "flex", "align-items": "center", "justify-content": "center", width: "29px", padding: 0, background: "transparent", border: "1px solid var(--border-color)", "border-radius": "6px", color: "var(--text-muted)", cursor: "pointer" }}
-        >
-          {workbench.zenMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
-        <button
-          onClick={draftMissing} disabled={drafting()}
-          title="The agent writes a synopsis for every card that has none"
-          style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "12px", opacity: drafting() ? 0.6 : 1 }}
-        >
-          {drafting() ? "Drafting…" : "Draft missing synopses"}
-        </button>
+    <div class="corkboard">
+      <div class="corkboard-bar">
+        <div class="card-filters">
+          <select class="input" value={filter.pov} onChange={(e) => setFilter("pov", +e.currentTarget.value)} aria-label="Point of view">
+            <option value={0}>Any point of view</option>
+            <For each={used("pov")}>{(o) => <option value={o.id}>{o.name}</option>}</For>
+          </select>
+          <select class="input" value={filter.location} onChange={(e) => setFilter("location", +e.currentTarget.value)} aria-label="Location">
+            <option value={0}>Anywhere</option>
+            <For each={used("location")}>{(o) => <option value={o.id}>{o.name}</option>}</For>
+          </select>
+          <select class="input" value={filter.thread} onChange={(e) => setFilter("thread", +e.currentTarget.value)} aria-label="Thread">
+            <option value={0}>Any thread</option>
+            <For each={threads.latest ?? []}>{(t) => <option value={t.id}>{t.name}</option>}</For>
+          </select>
+          <select class="input" value={filter.status} onChange={(e) => setFilter("status", e.currentTarget.value)} aria-label="Status">
+            <option value="">Any status</option>
+            <For each={STATUSES.filter((st) => st.id)}>{(st) => <option value={st.id}>{st.label}</option>}</For>
+          </select>
+          <Show when={filtering()}>
+            <Button size="sm" variant="ghost" onClick={() => setFilter({ pov: 0, location: 0, thread: 0, status: "" })}>Clear</Button>
+          </Show>
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => void draftMissing()} disabled={drafting()} title="The agent writes a synopsis for every card that has none">
+          <Sparkles size={12} /> {drafting() ? "Drafting…" : "Draft missing synopses"}
+        </Button>
       </div>
-      <Show when={(chapters() ?? []).length === 0}>
-        <div style={{ color: "var(--text-faint)", "font-size": "13px" }}>No scenes yet.</div>
+      <Show when={(chapters.latest ?? []).length === 0}>
+        <Empty title="No scenes yet">Create a scene in Write to start the board.</Empty>
       </Show>
-      <For each={chapters() ?? []}>
+      <For each={chapters.latest ?? []}>
         {(chapter) => (
-          <div style={{ "margin-bottom": "28px" }}>
-            <div style={{ "font-size": "12px", "font-weight": 600, "text-transform": "uppercase", "letter-spacing": "0.7px", color: "var(--text-muted)", "margin-bottom": "10px" }}>
-              {chapter.title}
-            </div>
-            <div style={{ display: "grid", "grid-template-columns": "repeat(auto-fill, minmax(240px, 1fr))", gap: "14px" }}>
-              <For each={chapter.scenes}>
+          <section class="corkboard-chapter">
+            <h3>{chapter.title}</h3>
+            <div class="corkboard-grid">
+              <For each={chapter.scenes.filter(shown)}>
                 {(file) => (
-                  <div style={{
-                    border: "1px solid var(--border-color)", "border-radius": "6px",
-                    background: "var(--bg-secondary, transparent)", display: "flex",
-                    "flex-direction": "column", "min-height": "150px", overflow: "hidden",
-                  }}>
-                    <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "8px 10px", "border-bottom": "1px solid var(--border-color)" }}>
-                      <span
-                        style={{ width: "8px", height: "8px", "border-radius": "50%", "flex-shrink": 0,
-                          background: statusColor(meta[file]?.status ?? ""),
-                          border: (meta[file]?.status ?? "") === "" ? "1px solid var(--border-color)" : "none" }}
-                        title={STATUSES.find(s => s.id === (meta[file]?.status ?? ""))?.label}
-                      />
-                      <span
-                        onClick={() => props.onOpenScene(file)}
-                        title={file}
-                        style={{ "font-size": "13px", "font-weight": 600, color: "var(--text-main)", cursor: "pointer", overflow: "hidden", "white-space": "nowrap", "text-overflow": "ellipsis", flex: 1 }}
-                      >
+                  <article class="index-card" data-status={meta[file]?.status ?? ""}>
+                    <header>
+                      <button type="button" class="index-card-title" title={`Write ${file}`} onClick={() => props.onOpenScene(file)}>
                         {sceneName(file)}
-                      </span>
+                      </button>
                       <select
+                        class="index-card-status"
                         value={meta[file]?.status ?? ""}
                         onChange={(e) => saveMeta(file, { status: e.currentTarget.value })}
-                        style={{ background: "transparent", color: "var(--text-muted)", border: "none", "font-size": "11px", cursor: "pointer", outline: "none" }}
+                        aria-label="Status"
                       >
-                        <For each={STATUSES}>{(s) => <option value={s.id}>{s.label}</option>}</For>
+                        <For each={STATUSES}>{(st) => <option value={st.id}>{st.label}</option>}</For>
                       </select>
-                    </div>
+                    </header>
                     <textarea
+                      class="index-card-synopsis"
                       value={meta[file]?.synopsis ?? ""}
                       onInput={(e) => saveMeta(file, { synopsis: e.currentTarget.value }, 600)}
                       placeholder="What happens in this scene?"
-                      style={{
-                        flex: 1, resize: "none", border: "none", outline: "none", background: "transparent",
-                        color: "var(--text-muted)", padding: "10px", "font-size": "12.5px", "line-height": "1.6",
-                        "font-family": "inherit", "min-height": "90px",
-                      }}
                     />
-                  </div>
+                    <footer class="index-card-foot">
+                      <span class="index-card-tags">
+                        <Show when={entityName(detailsFor(file).pov)}>{(n) => <span class="card-tag" title="Point of view">{n()}</span>}</Show>
+                        <Show when={detailsFor(file).storyTime}><span class="card-tag" title="Story time">{detailsFor(file).storyTime}</span></Show>
+                        <For each={detailsFor(file).threads}>
+                          {(id) => {
+                            const i = () => (threads.latest ?? []).findIndex((t) => t.id === id);
+                            const t = () => (threads.latest ?? [])[i()];
+                            return <Show when={t()}><span class="card-thread" title={t()!.name} style={{ background: threadColor(t()!, i()) }} /></Show>;
+                          }}
+                        </For>
+                      </span>
+                      <span class="hint">
+                        {(words()[file] ?? 0).toLocaleString()}
+                        <Show when={detailsFor(file).target > 0}> / {detailsFor(file).target.toLocaleString()}</Show> words
+                      </span>
+                    </footer>
+                  </article>
                 )}
               </For>
             </div>
-          </div>
+          </section>
         )}
       </For>
     </div>

@@ -1,0 +1,15 @@
+.research-view { display: flex; flex-direction: column; height: 100%; }
+.research-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--border-color);
+}
+.research-list { flex: 1; overflow-y: auto; padding-bottom: var(--sp-4); }
+.research-group .count-badge { margin-left: auto; }
+.research-row { margin: 0 var(--sp-2); padding-left: var(--sp-2); }
+.research-icon { display: inline-flex; flex-shrink: 0; color: var(--text-faint); }
+.research-row.active .research-icon { color: var(--accent); }
+.research-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.research-row .row-meta { flex-shrink: 0; max-width: 40%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

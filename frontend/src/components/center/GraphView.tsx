@@ -1,24 +1,16 @@
 import { type Component, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
-import { Link2, Maximize2, Minimize2, Share2, Sparkles } from "lucide-solid";
-import { workbench, setWorkbench } from "../../stores/workbench";
+import { Link2, Share2, Sparkles } from "lucide-solid";
+import { Button, Empty } from "../ui";
+import "./GraphView.css";
 
-// The codex as a constellation. Three layers: gray scene co-occurrence
+// The codex as a constellation. Three layers: faint scene co-occurrence
 // edges (pure mention math), dashed agent-derived relations, and solid
 // human-drawn relations. Force-directed, draggable, click-through.
+// Entity-kind colours live in GraphView.css (data-kind on each node).
 
 const W = 1600;
 const H = 900;
-
-const KIND_COLOR: Record<string, string> = {
-  character: "#61afef",
-  place: "#98c379",
-  faction: "#e5c07b",
-  item: "#d19a66",
-  creature: "#e06c75",
-  event: "#c678dd",
-  lore: "#56b6c2",
-};
 
 interface GNode {
   id: number;
@@ -57,7 +49,8 @@ export const GraphView: Component<GraphProps> = (props) => {
   let svgRef: SVGSVGElement | undefined;
 
   const [, { refetch }] = createResource(
-    () => props.refreshVersion,
+    // Wrapped: a bare version number of 0 is falsy and would never fetch.
+    () => ({ v: props.refreshVersion }),
     async () => {
       try {
         const res = await window.chronicler.invoke("codex/graph");
@@ -228,45 +221,44 @@ export const GraphView: Component<GraphProps> = (props) => {
     g.rels.some(r => (r.from === id || r.to === id) && (r.from === hovered() || r.to === hovered()));
   const dimmed = (id: number) => hovered() !== null && hovered() !== id && !adjacent(id);
 
-  const btn = {
-    display: "flex", "align-items": "center", gap: "5px", padding: "5px 12px",
-    background: "transparent", border: "1px solid var(--border-color)",
-    color: "var(--text-muted)", "border-radius": "6px", cursor: "pointer", "font-size": "12px",
-  } as const;
-
   return (
-    <div style={{ height: "100%", display: "flex", "flex-direction": "column" }}>
-      <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "12px 18px 8px" }}>
-        <Share2 size={14} style={{ color: "var(--text-muted)" }} />
-        <span style={{ "font-size": "13px", "font-weight": 600, color: "var(--text-main)" }}>Relationships</span>
-        <span style={{ "font-size": "11px", color: "var(--text-faint)" }}>
-          gray = shared scenes · dashed = agent · solid = yours
-        </span>
-        <div style={{ flex: 1 }} />
-        <button
-          style={{ ...btn, ...(linkMode() ? { color: "var(--accent)", "border-color": "var(--accent)" } : {}) }}
+    <div class="gv-view">
+      <div class="gv-toolbar">
+        <Share2 size={14} class="gv-toolbar-icon" />
+        <span class="gv-title">Relationships</span>
+        <div class="gv-legend">
+          <span>
+            <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" class="gv-co" stroke-width="2" opacity="0.5" /></svg>
+            share scenes
+          </span>
+          <span>
+            <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" class="gv-rel agent" /></svg>
+            suggested by the agent
+          </span>
+          <span>
+            <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" class="gv-rel human" /></svg>
+            yours
+          </span>
+        </div>
+        <Button
+          size="sm"
+          class={linkMode() ? "gv-linking" : ""}
           onClick={() => (linkMode() ? cancelLink() : (setLinkMode(true), props.onStatus("Link mode: click two entities")))}
         >
           <Link2 size={12} /> {linkMode() ? "Cancel link" : "Add link"}
-        </button>
-        <button style={btn} onClick={derive} disabled={deriving()}>
+        </Button>
+        <Button size="sm" onClick={derive} disabled={deriving()}>
           <Sparkles size={12} /> {deriving() ? "Deriving…" : "Derive links"}
-        </button>
-        <button
-          style={{ ...btn, width: "28px", "justify-content": "center", padding: 0, height: "27px" }}
-          onClick={() => setWorkbench("zenMode", z => !z)}
-          title={workbench.zenMode ? "Exit full screen" : "Full screen"}
-        >
-          {workbench.zenMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
+        </Button>
       </div>
 
-      <div style={{ flex: 1, "min-height": 0, position: "relative" }}>
+      <div class="gv-stage">
         <svg
           ref={svgRef}
+          class="gv-svg"
+          classList={{ linking: linkMode() }}
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
-          style={{ width: "100%", height: "100%", display: "block" }}
           onPointerMove={onPointerMove}
         >
           <Show when={loaded()}>
@@ -277,8 +269,8 @@ export const GraphView: Component<GraphProps> = (props) => {
                   const a = byId(e.a), b = byId(e.b);
                   return a && b ? (
                     <line
+                      class="gv-co"
                       x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke="var(--text-faint)"
                       stroke-width={Math.min(4, 0.8 + e.weight * 0.7)}
                       opacity={dimmed(e.a) || dimmed(e.b) ? 0.06 : 0.22}
                     />
@@ -295,16 +287,13 @@ export const GraphView: Component<GraphProps> = (props) => {
                   return (
                     <g opacity={faded ? 0.08 : 1}>
                       <line
+                        class={`gv-rel ${r.source === "human" ? "human" : "agent"}`}
                         x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                        stroke={r.source === "human" ? "#98c379" : "var(--accent)"}
-                        stroke-width="1.6"
-                        stroke-dasharray={r.source === "llm" ? "5 4" : undefined}
-                        opacity="0.75"
                       />
                       <text
                         x={mx} y={my - 5}
                         text-anchor="middle"
-                        class="graph-edge-label"
+                        class="gv-edge-label"
                         onClick={() => deleteRelation(r)}
                       >
                         {r.label}
@@ -317,21 +306,17 @@ export const GraphView: Component<GraphProps> = (props) => {
               <For each={g.nodes}>
                 {(n) => (
                   <g
+                    class="gv-node"
+                    classList={{ picked: linkFrom() === n.id || linkTo() === n.id }}
+                    data-kind={n.kind}
                     opacity={dimmed(n.id) ? 0.18 : 1}
-                    style={{ cursor: linkMode() ? "crosshair" : "pointer", transition: "opacity 0.15s" }}
                     onPointerDown={(e) => onNodeDown(n, e)}
                     onPointerUp={() => onPointerUp(n)}
-                    onMouseEnter={() => setHovered(n.id)}
-                    onMouseLeave={() => setHovered(null)}
+                    onPointerEnter={() => setHovered(n.id)}
+                    onPointerLeave={() => setHovered(null)}
                   >
-                    <circle
-                      cx={n.x} cy={n.y} r={n.r}
-                      fill={KIND_COLOR[n.kind] ?? "#8b949e"}
-                      fill-opacity="0.16"
-                      stroke={linkFrom() === n.id || linkTo() === n.id ? "var(--accent)" : KIND_COLOR[n.kind] ?? "#8b949e"}
-                      stroke-width={linkFrom() === n.id || linkTo() === n.id ? 3 : 2}
-                    />
-                    <text x={n.x} y={n.y + n.r + 14} text-anchor="middle" class="graph-node-label">
+                    <circle cx={n.x} cy={n.y} r={n.r} />
+                    <text x={n.x} y={n.y + n.r + 14} text-anchor="middle" class="gv-node-label">
                       {n.name}
                     </text>
                   </g>
@@ -343,29 +328,24 @@ export const GraphView: Component<GraphProps> = (props) => {
 
         {/* Label form for a pending human link */}
         <Show when={linkFrom() !== null && linkTo() !== null}>
-          <div style={{
-            position: "absolute", left: "50%", top: "18px", transform: "translateX(-50%)",
-            background: "var(--panel-bg)", border: "1px solid var(--border-color)", "border-radius": "8px",
-            padding: "10px 12px", display: "flex", gap: "8px", "align-items": "center",
-            "box-shadow": "0 6px 18px rgba(0,0,0,0.35)", "font-size": "12.5px", color: "var(--text-main)",
-          }}>
+          <div class="gv-link-form">
             <span>{byId(linkFrom()!)?.name}</span>
             <input
+              class="input"
               autofocus
               value={labelDraft()}
               onInput={(e) => setLabelDraft(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === "Enter") saveLink(); if (e.key === "Escape") cancelLink(); }}
               placeholder="captain of…"
-              style={{ width: "140px", background: "var(--bg-color)", border: "1px solid var(--border-color)", "border-radius": "5px", color: "var(--text-main)", padding: "4px 8px", "font-size": "12px", outline: "none" }}
             />
             <span>{byId(linkTo()!)?.name}</span>
-            <button style={{ ...btn, padding: "4px 10px", color: "var(--accent)", "border-color": "var(--accent)" }} onClick={saveLink}>Save</button>
+            <Button size="sm" variant="primary" onClick={saveLink}>Save</Button>
           </div>
         </Show>
 
         <Show when={loaded() && g.nodes.length === 0}>
-          <div style={{ position: "absolute", inset: 0, display: "flex", "align-items": "center", "justify-content": "center", color: "var(--text-faint)", "font-size": "13px" }}>
-            No codex entities yet — the graph draws itself once the world bible has people in it.
+          <div class="gv-empty">
+            <Empty>No codex entries yet — the graph draws itself once the world bible has people in it.</Empty>
           </div>
         </Show>
       </div>

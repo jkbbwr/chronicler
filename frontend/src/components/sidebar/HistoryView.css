@@ -1,0 +1,90 @@
+.history-view { display: flex; flex-direction: column; height: 100%; }
+
+.history-toolbar { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.history-lock { display: flex; gap: 6px; }
+.history-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-main);
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  outline: none;
+}
+.history-input:focus { border-color: var(--accent); }
+.history-lock-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.history-lock-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.history-lock-btn:disabled { opacity: 0.5; cursor: default; }
+.history-filter { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); cursor: pointer; }
+
+.history-list { flex: 1; overflow-y: auto; }
+.history-hint { padding: 4px 0; font-size: 11px; color: var(--text-faint); }
+.history-empty { padding: 8px 15px; font-size: 12px; }
+
+.history-change { border-bottom: 1px solid var(--border-color); }
+.history-change-row { display: flex; align-items: center; gap: 2px; padding: 6px 10px 6px 6px; }
+.history-change-row:hover { background: var(--hover-bg); }
+.history-change-main { flex: 1; min-width: 0; cursor: pointer; }
+.history-change-name {
+  font-size: 12px;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-change-current .history-change-name { font-weight: 600; }
+.history-untitled { color: var(--text-muted); font-style: italic; }
+.history-change-current .history-untitled { font-style: normal; color: var(--text-main); }
+.history-change-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-icon-btn {
+  display: flex;
+  flex-shrink: 0;
+  padding: 4px;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.history-icon-btn:hover { color: var(--text-main); background: var(--active-bg); }
+/* Row actions only appear on hover, keeping the list quiet. */
+.history-change-row > .history-icon-btn:not(:first-child) { visibility: hidden; }
+.history-change-row:hover > .history-icon-btn { visibility: visible; }
+
+.history-saves { padding: 0 10px 6px 30px; }
+.history-save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.history-save:hover { background: var(--hover-bg); }
+.history-save-time { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.history-save-files { flex: 1; min-width: 0; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-save .history-icon-btn { visibility: hidden; }
+.history-save:hover .history-icon-btn { visibility: visible; }

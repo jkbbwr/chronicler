@@ -15,8 +15,8 @@ const COMMENT = /<!--[\s\S]*?(?:-->|$)/g;
 
 const annotationTheme = EditorView.baseTheme({
   ".cm-annotation": {
-    background: "rgba(229, 192, 123, 0.12)",
-    color: "#b8985a",
+    background: "var(--warning-soft)",
+    color: "color-mix(in srgb, var(--warning) 80%, var(--text-muted))",
     fontStyle: "italic",
     borderRadius: "3px",
     padding: "0 2px",

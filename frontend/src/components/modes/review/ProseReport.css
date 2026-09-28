@@ -1,0 +1,64 @@
+/* The prose report page (Review). */
+.prose-report { max-width: var(--page-measure); margin: 0 auto; padding: var(--sp-6) var(--sp-5) var(--sp-7); }
+
+.prose-report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-5); }
+.prose-report-head h1 { margin: 0 0 var(--sp-1); font-size: var(--fs-xl); font-weight: 600; color: var(--text-main); }
+
+.prose-report-section { margin-bottom: var(--sp-6); }
+.prose-report-section h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-lg); font-weight: 600; color: var(--text-main); }
+.prose-report-section > .hint { margin: 0 0 var(--sp-3); }
+
+.prose-report .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Tables ---- */
+.prose-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+.prose-table th {
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border-color);
+}
+.prose-table th.num { text-align: right; }
+.prose-table td { padding: var(--sp-1) var(--sp-2); color: var(--text-muted); border-bottom: 1px solid var(--border-color); vertical-align: top; }
+.prose-table tr:last-child td { border-bottom: none; }
+.prose-word { font-family: var(--font-prose); color: var(--text-main); }
+
+.prose-places { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.prose-place {
+  height: 20px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  background: var(--active-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.prose-place:hover { background: var(--info-soft); color: var(--text-main); }
+
+/* ---- Rhythm list ---- */
+.prose-rhythm { display: flex; flex-direction: column; font-size: var(--fs-md); }
+.prose-rhythm-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5rem 6rem minmax(6rem, 10rem);
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 28px;
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  text-align: left;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-color);
+}
+button.prose-rhythm-row { cursor: pointer; }
+button.prose-rhythm-row:hover { background: var(--hover-bg); color: var(--text-main); }
+.prose-rhythm-head { font-size: var(--fs-xs); font-weight: 600; color: var(--text-faint); }
+.prose-scene { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-main); }
+
+.prose-bar { display: block; height: 6px; overflow: hidden; background: var(--active-bg); border-radius: var(--radius-pill); }
+.prose-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-pill); }

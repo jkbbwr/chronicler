@@ -7,8 +7,8 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 
-// Squiggly underlines for prose diagnostics: red for spelling, blue for
-// grammar (assistant reserved for later).
+// Squiggly underlines for prose diagnostics, coloured from semantic tokens:
+// spelling = danger, grammar = info, style = warning, agent findings = ai.
 
 export interface Diag {
   source: "spelling" | "grammar" | "style" | "assistant";
@@ -27,19 +27,19 @@ export interface Diag {
 
 const squiggleTheme = EditorView.baseTheme({
   ".cm-diag-spelling": {
-    textDecoration: "underline wavy #e06c75 1px",
+    textDecoration: "underline wavy var(--danger) 1px",
     textDecorationSkipInk: "none",
   },
   ".cm-diag-grammar": {
-    textDecoration: "underline wavy #61afef 1px",
+    textDecoration: "underline wavy var(--info) 1px",
     textDecorationSkipInk: "none",
   },
   ".cm-diag-style": {
-    textDecoration: "underline dotted #e5c07b 1.5px",
+    textDecoration: "underline dotted var(--warning) 1.5px",
     textDecorationSkipInk: "none",
   },
   ".cm-diag-assistant": {
-    textDecoration: "underline wavy #b689e0 1px",
+    textDecoration: "underline wavy var(--ai) 1px",
     textDecorationSkipInk: "none",
   },
 });

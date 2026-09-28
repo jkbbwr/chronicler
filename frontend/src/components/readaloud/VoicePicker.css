@@ -1,0 +1,9 @@
+/* Voice picker in Settings → Read aloud (extends the model picker). */
+.voice-picker-row { display: flex; align-items: center; gap: var(--sp-1); }
+.voice-picker-row .model-picker-field { flex: 1; min-width: 0; }
+.voice-picker .voice-picker-input { font-family: var(--font-ui); font-size: var(--fs-sm); }
+.model-option.voice-option { flex-direction: row; align-items: center; gap: var(--sp-2); text-align: left; }
+.voice-option-text { display: flex; flex-direction: column; align-items: flex-start; flex: 1; min-width: 0; }
+.voice-name { font-size: var(--fs-sm); color: var(--text-main); }
+.voice-picker .spin { animation: voice-spin 0.9s linear infinite; }
+@keyframes voice-spin { to { transform: rotate(360deg); } }

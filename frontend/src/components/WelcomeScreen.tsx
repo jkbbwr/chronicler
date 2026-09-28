@@ -1,5 +1,7 @@
 import { type Component, createSignal, For, Show } from "solid-js";
 import { FolderOpen, FilePlus, X } from "lucide-solid";
+import { Button, IconButton } from "./ui";
+import "./WelcomeScreen.css";
 
 interface RecentProject {
   path: string;
@@ -8,6 +10,7 @@ interface RecentProject {
 
 interface WelcomeScreenProps {
   recents: RecentProject[];
+  onNewProject: () => void;
 }
 
 const basename = (p: string) => p.split("/").pop() || p;
@@ -23,115 +26,49 @@ export const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
   };
 
   return (
-    <div style={{
-      position: "fixed",
-      top: 0, left: 0, right: 0, bottom: 0,
-      background: "var(--bg-color)",
-      "z-index": 1000,
-      display: "flex",
-      "flex-direction": "column",
-    }}>
+    <div class="welcome">
       {/* Keep the frameless window draggable */}
       <div class="titlebar" />
 
-      <div style={{
-        flex: 1,
-        display: "flex",
-        "justify-content": "center",
-        "align-items": "center",
-        gap: "60px",
-        padding: "40px",
-      }}>
-        <div style={{ "text-align": "center", "min-width": "280px" }}>
-          <div style={{
-            "font-size": "42px",
-            "font-weight": 300,
-            color: "var(--text-main)",
-            "font-family": "ui-serif, Georgia, serif",
-            "margin-bottom": "8px",
-          }}>
-            Chronicler
-          </div>
-          <div style={{ color: "var(--text-faint)", "font-size": "13px", "margin-bottom": "40px" }}>
-            The IDE for fiction writing
-          </div>
-
-          <div style={{ display: "flex", "flex-direction": "column", gap: "12px", "align-items": "center" }}>
-            <button
-              onClick={() => window.chronicler.createProject()}
-              style={{
-                display: "flex", "align-items": "center", gap: "10px",
-                width: "220px", padding: "10px 16px",
-                background: "var(--accent)", color: "#fff",
-                border: "none", "border-radius": "6px",
-                "font-size": "13px", cursor: "pointer",
-              }}
-            >
-              <FilePlus size={16} /> New Project
-            </button>
-            <button
-              onClick={() => window.chronicler.openProject()}
-              style={{
-                display: "flex", "align-items": "center", gap: "10px",
-                width: "220px", padding: "10px 16px",
-                background: "transparent", color: "var(--text-main)",
-                border: "1px solid var(--border-color)", "border-radius": "6px",
-                "font-size": "13px", cursor: "pointer",
-              }}
-            >
-              <FolderOpen size={16} /> Open Project...
-            </button>
+      <div class="welcome-body" classList={{ "has-recents": recents().length > 0 }}>
+        <div class="welcome-hero">
+          <h1 class="welcome-title">Chronicler</h1>
+          <p class="welcome-tagline">The IDE for fiction writing</p>
+          <div class="welcome-actions">
+            <Button variant="primary" onClick={props.onNewProject}>
+              <FilePlus size={15} /> New project
+            </Button>
+            <Button onClick={() => window.chronicler.openProject()}>
+              <FolderOpen size={15} /> Open…
+            </Button>
           </div>
         </div>
 
         <Show when={recents().length > 0}>
-          <div style={{ "min-width": "320px", "max-width": "400px" }}>
-            <div style={{
-              "font-size": "11px", "font-weight": 600, "text-transform": "uppercase",
-              color: "var(--text-muted)", "letter-spacing": "0.5px", "margin-bottom": "12px",
-            }}>
-              Recent Projects
-            </div>
+          <section class="welcome-recents">
+            <div class="section-label">Recent projects</div>
             <For each={recents()}>
               {(project) => (
                 <div
-                  class="recent-project-row"
+                  class="list-row welcome-recent"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => window.chronicler.openProject(project.path)}
-                  style={{
-                    padding: "10px 12px", cursor: "pointer",
-                    "border-radius": "6px", "margin-bottom": "4px",
-                    display: "flex", "align-items": "center", gap: "8px",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--hover-bg)"}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                  onKeyDown={(e) => { if (e.key === "Enter") window.chronicler.openProject(project.path); }}
                 >
-                  <div style={{ flex: 1, "min-width": 0 }}>
-                    <div style={{ color: "var(--text-main)", "font-size": "13px", "font-weight": 500 }}>
-                      {basename(project.path)}
-                    </div>
-                    <div style={{
-                      color: "var(--text-faint)", "font-size": "11px", "margin-top": "2px",
-                      "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis",
-                    }}>
-                      {shortenHome(project.path)}
-                    </div>
+                  <div class="welcome-recent-text">
+                    <div class="welcome-recent-name">{basename(project.path)}</div>
+                    <div class="welcome-recent-path">{shortenHome(project.path)}</div>
                   </div>
-                  <div
-                    title="Remove from Recent Projects"
-                    onClick={(e) => removeRecent(e, project.path)}
-                    style={{
-                      display: "flex", "align-items": "center", padding: "4px",
-                      color: "var(--text-faint)", "border-radius": "4px", "flex-shrink": 0,
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-main)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-faint)"; }}
-                  >
-                    <X size={14} />
+                  <div class="row-actions">
+                    <IconButton size="sm" label="Remove from recent projects" onClick={(e) => removeRecent(e, project.path)}>
+                      <X size={13} />
+                    </IconButton>
                   </div>
                 </div>
               )}
             </For>
-          </div>
+          </section>
         </Show>
       </div>
     </div>

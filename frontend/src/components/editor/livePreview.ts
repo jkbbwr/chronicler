@@ -214,7 +214,9 @@ const livePreviewPlugin = ViewPlugin.fromClass(
       this.lineDecorations = buildLineDecorations(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      // The parser works incrementally on big scenes: rebuild when it catches up too.
+      if (update.docChanged || update.selectionSet || update.viewportChanged
+        || syntaxTree(update.startState) !== syntaxTree(update.state)) {
         this.decorations = buildDecorations(update.view);
         this.lineDecorations = buildLineDecorations(update.view);
       }

@@ -8,9 +8,14 @@
     "build": "bun run build:backend && bun run build:frontend",
     "package": "bun run build:backend && cd frontend && bun run package",
     "test:backend": "cargo test --manifest-path backend/Cargo.toml",
+    "test:unit": "cd frontend && bun test tests/",
     "test:e2e": "bun frontend/tests/e2e.mjs",
-    "test": "bun run test:backend && bun run test:e2e",
-    "dist": "bun run build:backend && cd frontend && bun run dist"
+    "test": "bun run test:backend && bun run test:unit && bun run test:e2e",
+    "dist": "bun run build:backend && cd frontend && bun run dist",
+    "build:backend:linux": "./scripts/build-linux.sh --backend-only",
+    "dist:linux": "./scripts/build-linux.sh",
+    "dist:linux:x64": "./scripts/build-linux.sh --arch x64",
+    "dist:linux:arm64": "./scripts/build-linux.sh --arch arm64"
   },
   "workspaces": [
     "frontend"

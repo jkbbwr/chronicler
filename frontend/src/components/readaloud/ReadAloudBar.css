@@ -1,0 +1,52 @@
+.read-aloud-bar {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: var(--sp-5);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: calc(100% - var(--sp-6));
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pop);
+  animation: read-aloud-in var(--dur) var(--ease);
+}
+.read-aloud-icon { flex-shrink: 0; color: var(--text-faint); }
+.read-aloud-icon.live { color: var(--accent); }
+.read-aloud-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 180px;
+  margin: 0 var(--sp-2) 0 var(--sp-1);
+  line-height: 1.25;
+}
+.read-aloud-scene {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.read-aloud-status { overflow: hidden; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; text-overflow: ellipsis; }
+.read-aloud-error { color: var(--danger); }
+.read-aloud-play.icon-btn { width: 30px; height: 30px; color: var(--text-main); border-radius: var(--radius-pill); }
+.read-aloud-rate {
+  height: 24px;
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.read-aloud-rate:hover { color: var(--text-main); background: var(--hover-bg); }
+.read-aloud-rate:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@keyframes read-aloud-in { from { opacity: 0; transform: translate(-50%, 6px); } }

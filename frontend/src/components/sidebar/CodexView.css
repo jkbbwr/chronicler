@@ -1,0 +1,12 @@
+.codex-index { display: flex; flex-direction: column; height: 100%; }
+.codex-search { display: flex; gap: var(--sp-1); padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-3); }
+.codex-add { display: flex; gap: var(--sp-1); padding: 0 var(--sp-3) var(--sp-2); }
+.codex-add select { width: 110px; flex-shrink: 0; }
+.codex-inbox { margin: 0 var(--sp-2) var(--sp-2); border: 1px solid var(--border-color); }
+.codex-inbox span:nth-child(2) { flex: 1; }
+.codex-inbox.pending { color: var(--accent); }
+.codex-inbox.pending .count-badge { color: var(--on-accent); background: var(--accent); }
+.codex-list { flex: 1; overflow-y: auto; padding-bottom: var(--sp-4); }
+.codex-hint { padding: var(--sp-2) var(--sp-3); }
+.codex-entry { margin: 0 var(--sp-2); }
+.codex-name { flex: 1; min-width: 0; overflow: hidden; font-family: var(--font-prose); font-size: 14px; color: var(--text-main); white-space: nowrap; text-overflow: ellipsis; }

@@ -1,0 +1,9 @@
+.critique-list { display: flex; flex-direction: column; min-height: 100%; }
+.critique-hint { padding: var(--sp-3) var(--sp-3) var(--sp-2); margin: 0; }
+.critique-scene { margin: 0 var(--sp-2) 2px; padding: var(--sp-2); border-radius: var(--radius-md); cursor: pointer; }
+.critique-scene:hover { background: var(--hover-bg); }
+.critique-scene-head { display: flex; align-items: center; gap: var(--sp-2); }
+.critique-scene-name { flex: 1; min-width: 0; overflow: hidden; font-family: var(--font-prose); font-size: 14px; font-weight: 600; color: var(--text-main); white-space: nowrap; text-overflow: ellipsis; }
+.critique-count { color: var(--ai); background: var(--ai-soft); }
+.critique-notes { margin-top: 2px; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.critique-actions { margin-top: auto; padding: var(--sp-3); }

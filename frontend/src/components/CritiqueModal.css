@@ -1,0 +1,4 @@
+/* Reading-critique brief. */
+.critique-form { display: flex; flex-direction: column; gap: var(--sp-4); }
+.critique-form > .hint { margin: 0; font-size: var(--fs-sm); }
+.critique-form textarea.input { min-height: 72px; }

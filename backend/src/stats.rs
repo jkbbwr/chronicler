@@ -1,7 +1,7 @@
-use crate::db;
+use crate::app::App;
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
-use std::path::Path;
+use serde::Serialize;
+use ts_rs::TS;
 
 // Writing statistics: live word counts per file plus a persistent daily
 // ledger (words at day start vs now) so "written today" and streak history
@@ -65,47 +65,74 @@ pub fn count_words(content: &str) -> usize {
     count
 }
 
+#[derive(Serialize, TS, Debug)]
+pub struct FileWords {
+    pub file: String,
+    pub words: i64,
+}
+
+#[derive(Serialize, TS, Debug)]
+pub struct DayWords {
+    /// The client's local date, e.g. "2026-08-25".
+    pub date: String,
+    /// Words added that day (can be negative).
+    pub written: i64,
+}
+
+#[derive(Serialize, TS, Debug)]
+pub struct ProjectStats {
+    pub total: i64,
+    pub files: Vec<FileWords>,
+    pub today: DayWords,
+    /// The last 14 writing days, newest first.
+    pub history: Vec<DayWords>,
+}
+
 /// Compute project stats and roll the daily ledger forward.
 /// `today` is the client's local date (e.g. "2026-08-25").
-pub fn project_stats(root: &Path, today: &str) -> Result<Value> {
+pub fn project_stats(app: &App, today: &str) -> Result<ProjectStats> {
     let mut files = Vec::new();
     let mut total: i64 = 0;
-    for rel in crate::list_md_files(root) {
-        let Ok(path) = crate::resolve_path(root, &rel) else { continue };
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+    for rel in app.md_files() {
+        let Ok(content) = std::fs::read_to_string(app.root.join(&rel)) else {
+            continue;
+        };
         let words = count_words(&content) as i64;
         total += words;
-        files.push(json!({ "file": rel, "words": words }));
+        files.push(FileWords { file: rel, words });
     }
 
-    let conn = db::open(root)?;
-    conn.execute(
-        "INSERT INTO writing_days (date, start, latest) VALUES (?1, ?2, ?2)
-         ON CONFLICT(date) DO UPDATE SET latest = ?2",
-        rusqlite::params![today, total],
-    )
-    .context("updating writing ledger")?;
-
-    let (start, latest): (i64, i64) = conn.query_row(
-        "SELECT start, latest FROM writing_days WHERE date = ?1",
-        [today],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-
-    let mut stmt =
-        conn.prepare("SELECT date, latest - start FROM writing_days ORDER BY date DESC LIMIT 14")?;
-    let history = stmt
-        .query_map([], |r| {
-            Ok(json!({ "date": r.get::<_, String>(0)?, "written": r.get::<_, i64>(1)? }))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "total": total,
-        "files": files,
-        "today": { "date": today, "written": latest - start },
-        "history": history,
-    }))
+    app.db.tx(|conn| {
+        conn.execute(
+            "INSERT INTO writing_days (date, start, latest) VALUES (?1, ?2, ?2)
+             ON CONFLICT(date) DO UPDATE SET latest = ?2",
+            rusqlite::params![today, total],
+        )
+        .context("updating writing ledger")?;
+        let (start, latest): (i64, i64) = conn.query_row(
+            "SELECT start, latest FROM writing_days WHERE date = ?1",
+            [today],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let history = conn
+            .prepare("SELECT date, latest - start FROM writing_days ORDER BY date DESC LIMIT 14")?
+            .query_map([], |r| {
+                Ok(DayWords {
+                    date: r.get(0)?,
+                    written: r.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ProjectStats {
+            total,
+            files,
+            today: DayWords {
+                date: today.to_string(),
+                written: latest - start,
+            },
+            history,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -119,6 +146,9 @@ mod tests {
         assert_eq!(count_words("before <!-- hidden words --> after"), 2);
         assert_eq!(count_words("text\n```\ncode words ignored\n```\nmore"), 2);
         assert_eq!(count_words("— … ***"), 0); // punctuation-only tokens
-        assert_eq!(count_words("line one <!-- spans\nstill hidden\n--> back now"), 4);
+        assert_eq!(
+            count_words("line one <!-- spans\nstill hidden\n--> back now"),
+            4
+        );
     }
 }

@@ -1,6 +1,7 @@
 {
   "name": "chronicler",
   "productName": "Chronicler",
+  "desktopName": "chronicler",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,12 +11,14 @@
     "build": "tsc -b && vite build",
     "package": "bun run build && electron-builder --dir",
     "dist": "bun run build && electron-builder",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "bun test tests/"
   },
   "build": {
     "appId": "dev.kibb.chronicler",
     "productName": "Chronicler",
     "electronVersion": "43.4.1",
+    "executableName": "chronicler",
     "directories": {
       "output": "release"
     },
@@ -33,6 +36,20 @@
     "mac": {
       "category": "public.app-category.productivity",
       "identity": null
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Office",
+      "maintainer": "kibb <kibb@users.noreply.github.com>",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "packageCategory": "editors",
+      "priority": "optional"
     }
   },
   "dependencies": {
@@ -42,8 +59,8 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/search": "^6",
     "@codemirror/state": "^6.7.1",
-    "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.43.9",
+    "@lezer/highlight": "1.2.3",
     "dompurify": "^3.4.14",
     "lucide-solid": "^1.33.0",
     "marked": "^18.0.11",
@@ -60,5 +77,9 @@
     "vite-plugin-solid": "^2.11.13"
   },
   "description": "The IDE of fiction writing",
-  "author": "kibb"
+  "author": {
+    "name": "kibb",
+    "email": "kibb@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/kibb/chronicler"
 }

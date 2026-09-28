@@ -1,0 +1,68 @@
+/* Design tokens. Themes (themes.css) define surfaces, ink and accent; every
+   semantic colour here is mixed from those, so all palettes stay coherent.
+   Components use these tokens — never raw hex. */
+:root {
+  /* Type */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* --font-prose is set from Settings at runtime (stores/workbench.ts). */
+  --font-prose: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+  --fs-display: 28px;
+
+  /* Space (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* Shape */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Semantic colour, mixed toward the theme's ink so it sits in any palette */
+  --danger: color-mix(in srgb, #e5534b 75%, var(--text-main));
+  --warning: color-mix(in srgb, #d29922 80%, var(--text-main));
+  --success: color-mix(in srgb, #3fb950 70%, var(--text-main));
+  --info: var(--accent);
+  --ai: color-mix(in srgb, #a371f7 75%, var(--text-main));
+  --danger-soft: color-mix(in srgb, #e5534b 16%, transparent);
+  --warning-soft: color-mix(in srgb, #d29922 16%, transparent);
+  --success-soft: color-mix(in srgb, #3fb950 16%, transparent);
+  --info-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --ai-soft: color-mix(in srgb, #a371f7 16%, transparent);
+  --on-accent: #fff;
+
+  /* Scene status */
+  --status-idea: color-mix(in srgb, #8b949e 70%, var(--text-main));
+  --status-draft: color-mix(in srgb, #d29922 75%, var(--text-main));
+  --status-revised: color-mix(in srgb, #58a6ff 75%, var(--text-main));
+  --status-final: color-mix(in srgb, #3fb950 70%, var(--text-main));
+
+  /* Surfaces */
+  --surface-raised: color-mix(in srgb, var(--panel-bg) 92%, var(--text-main));
+  --overlay: color-mix(in srgb, #000 45%, transparent);
+  --shadow-pop: 0 12px 32px color-mix(in srgb, #000 35%, transparent), 0 2px 6px color-mix(in srgb, #000 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+
+  /* Layout */
+  --titlebar-h: 40px;
+  --footer-h: 26px;
+  --prose-measure: 38em;
+  /* Reading pages (codex, history, reports); set from Settings. */
+  --page-measure: 56rem; /* rem, not em: pages use different font sizes */
+}

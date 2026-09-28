@@ -1,0 +1,41 @@
+/* Rename preview: scenes with their occurrences, old → new inline. */
+.rename-summary { margin: 0 0 var(--sp-3); font-size: var(--fs-md); color: var(--text-muted); }
+.rename-scenes {
+  max-height: 44vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+.rename-scene + .rename-scene { border-top: 1px solid var(--border-color); }
+.rename-scene-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-3);
+  font-size: var(--fs-md);
+  color: var(--text-main);
+  background: var(--panel-bg);
+  cursor: pointer;
+}
+.rename-scene-name { font-weight: 600; }
+.rename-hit {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 3px var(--sp-3) 3px 32px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.rename-hit:hover { background: var(--hover-bg); }
+.rename-hit input { transform: scale(0.85); flex-shrink: 0; }
+.rename-snippet { min-width: 0; font-family: var(--font-prose); font-size: var(--fs-md); line-height: 1.5; }
+.rename-snippet del { color: var(--danger); background: var(--danger-soft); border-radius: 2px; }
+.rename-snippet ins { margin-left: 2px; color: var(--success); background: var(--success-soft); border-radius: 2px; text-decoration: none; }
+.rename-hit.skipped .rename-snippet ins { display: none; }
+.rename-hit.skipped .rename-snippet del { color: inherit; background: none; text-decoration: none; }
+.rename-options { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-4); }
+.rename-options .checkbox-row { color: var(--text-main); font-size: var(--fs-md); }
+.rename-error { flex: 1; align-self: center; font-size: var(--fs-sm); color: var(--danger); }

@@ -1,12 +1,15 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use ts_rs::TS;
 
 // Manuscript compilation: chapters (each a list of scene files) are converted
 // from our markdown subset to Typst, wrapped in a template driven by the
 // wizard's settings, and rendered with the system `typst` binary.
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ChapterSpec {
     pub title: String,
     /// Project-relative scene file paths, in order. The RPC layer reads them
@@ -14,24 +17,40 @@ pub struct ChapterSpec {
     pub scenes: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS, Debug)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CompileSettings {
+    #[ts(as = "Option<String>", optional)]
     pub title: String,
+    #[ts(as = "Option<String>", optional)]
     pub author: String,
+    #[ts(as = "Option<String>", optional)]
     pub paper: String,
+    #[ts(as = "Option<f64>", optional)]
     pub font_size: f64,
+    #[ts(as = "Option<String>", optional)]
     pub font_family: String,
+    #[ts(as = "Option<f64>", optional)]
     pub line_spacing: f64,
+    #[ts(as = "Option<bool>", optional)]
     pub justify: bool,
+    #[ts(as = "Option<bool>", optional)]
     pub first_line_indent: bool,
+    #[ts(as = "Option<bool>", optional)]
     pub title_page: bool,
+    #[ts(as = "Option<bool>", optional)]
     pub chapter_page_breaks: bool,
+    #[ts(as = "Option<bool>", optional)]
     pub numbering: bool,
+    #[ts(as = "Option<String>", optional)]
     pub scene_separator: String,
+    #[ts(as = "Option<String>", optional)]
     pub custom_preamble: String,
+    /// pdf | typst | markdown
+    #[ts(as = "Option<String>", optional)]
     pub format: String,
     /// Aesthetic preset: modern-novel | classic-manuscript | elegant-book | plain
+    #[ts(as = "Option<String>", optional)]
     pub template: String,
 }
 
@@ -57,19 +76,46 @@ impl Default for CompileSettings {
     }
 }
 
-/// Escape characters that Typst would interpret as markup.
-fn esc(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '*' | '_' | '#' | '@' | '$' | '\\' | '<' | '>' | '[' | ']' | '~' | '`' => {
-                out.push('\\');
-                out.push(c);
-            }
-            _ => out.push(c),
+/// Escape plain text for Typst markup: markup characters anywhere, comment
+/// openers (`//`, `/*`), and — when the text starts a line — block markers
+/// (`= `, `+ `, `- `, `/ `, `1. `).
+fn escape(text: &str, line_start: bool) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let first = if line_start {
+        chars.iter().position(|c| !c.is_whitespace())
+    } else {
+        None
+    };
+    // `12. ` at line start is an enum marker: escape its dot.
+    let enum_dot = first.and_then(|f| {
+        let digits = chars[f..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let dot = f + digits;
+        (digits > 0
+            && chars.get(dot) == Some(&'.')
+            && chars.get(dot + 1).is_none_or(|c| c.is_whitespace()))
+        .then_some(dot)
+    });
+    for (i, &c) in chars.iter().enumerate() {
+        let next = chars.get(i + 1).copied();
+        let marker = Some(i) == first
+            && (c == '=' || (matches!(c, '+' | '-' | '/') && next.is_none_or(char::is_whitespace)));
+        let escape = match c {
+            '*' | '_' | '#' | '@' | '$' | '\\' | '<' | '>' | '[' | ']' | '~' | '`' => true,
+            '/' if matches!(next, Some('/') | Some('*')) => true,
+            _ => marker || Some(i) == enum_dot,
+        };
+        if escape {
+            out.push('\\');
         }
+        out.push(c);
     }
     out
+}
+
+/// Escape inline text (titles, separators) that may begin a line.
+fn esc(text: &str) -> String {
+    escape(text, true)
 }
 
 fn esc_string(text: &str) -> String {
@@ -112,7 +158,10 @@ fn convert_inline(text: &str) -> String {
         .into_owned();
     s = link
         .replace_all(&s, |c: &regex::Captures| {
-            keep(format!("#link(\"{}\")[{}]", esc_string(&c[2]), esc(&c[1])), &mut stash)
+            keep(
+                format!("#link(\"{}\")[{}]", esc_string(&c[2]), esc(&c[1])),
+                &mut stash,
+            )
         })
         .into_owned();
     s = strike
@@ -138,36 +187,32 @@ fn convert_inline(text: &str) -> String {
 
     // Escape what's left, then restore stashed segments
     let mut out = String::new();
-    let mut chars = s.chars().peekable();
+    let mut plain = String::new();
+    let mut at_start = true;
+    let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c == '\u{e000}' {
-            let mut idx = String::new();
-            for d in chars.by_ref() {
-                if d == '\u{e001}' {
-                    break;
-                }
-                idx.push(d);
-            }
-            if let Ok(i) = idx.parse::<usize>() {
-                out.push_str(&stash[i]);
+            out.push_str(&escape(&plain, at_start));
+            at_start = false;
+            plain.clear();
+            let idx: String = chars.by_ref().take_while(|&d| d != '\u{e001}').collect();
+            if let Some(seg) = idx.parse::<usize>().ok().and_then(|i| stash.get(i)) {
+                out.push_str(seg);
             }
         } else {
-            match c {
-                '*' | '_' | '#' | '@' | '$' | '\\' | '<' | '>' | '[' | ']' | '~' | '`' => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                _ => out.push(c),
-            }
+            plain.push(c);
         }
     }
+    out.push_str(&escape(&plain, at_start));
     out
 }
 
 fn is_hr(line: &str) -> bool {
     let t = line.trim();
     t.len() >= 3
-        && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*') || t.chars().all(|c| c == '_'))
+        && (t.chars().all(|c| c == '-')
+            || t.chars().all(|c| c == '*')
+            || t.chars().all(|c| c == '_'))
 }
 
 /// Remove `<!-- ... -->` annotations (including multi-line ones) — writer
@@ -233,7 +278,11 @@ pub fn md_to_typst(raw: &str) -> String {
             if level <= 6 && trimmed.chars().nth(level) == Some(' ') {
                 // In-scene headings sit below the chapter heading (level 1)
                 let depth = (level + 1).min(6);
-                out.push(format!("{} {}", "=".repeat(depth), convert_inline(&trimmed[level + 1..])));
+                out.push(format!(
+                    "{} {}",
+                    "=".repeat(depth),
+                    convert_inline(&trimmed[level + 1..])
+                ));
                 continue;
             }
         }
@@ -243,15 +292,20 @@ pub fn md_to_typst(raw: &str) -> String {
             continue;
         }
 
-        if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+        {
             out.push(format!("- {}", convert_inline(rest)));
             continue;
         }
-        if let Some(pos) = trimmed.find(". ") {
-            if pos > 0 && trimmed[..pos].chars().all(|c| c.is_ascii_digit()) {
-                out.push(format!("+ {}", convert_inline(&trimmed[pos + 2..])));
-                continue;
-            }
+        if let Some(pos) = trimmed.find(". ")
+            && pos > 0
+            && trimmed[..pos].chars().all(|c| c.is_ascii_digit())
+        {
+            out.push(format!("+ {}", convert_inline(&trimmed[pos + 2..])));
+            continue;
         }
 
         if trimmed.is_empty() {
@@ -303,7 +357,10 @@ pub fn generate_typst(
     ));
 
     if s.font_family.trim().is_empty() {
-        doc.push_str(&format!("#set text(size: {}pt, lang: \"en\")\n", s.font_size));
+        doc.push_str(&format!(
+            "#set text(size: {}pt, lang: \"en\")\n",
+            s.font_size
+        ));
     } else {
         doc.push_str(&format!(
             "#set text(size: {}pt, lang: \"en\", font: \"{}\")\n",
@@ -314,7 +371,11 @@ pub fn generate_typst(
 
     // Novel paragraph flow: spacing equals leading so paragraphs run
     // continuously and only the first-line indent marks the break.
-    let indent = if s.first_line_indent { ", first-line-indent: 1.2em" } else { "" };
+    let indent = if s.first_line_indent {
+        ", first-line-indent: 1.2em"
+    } else {
+        ""
+    };
     doc.push_str(&format!(
         "#set par(justify: {}, leading: {lead}em, spacing: {lead}em{indent})\n",
         s.justify,
@@ -322,9 +383,17 @@ pub fn generate_typst(
         indent = indent,
     ));
 
-    let brk = if s.chapter_page_breaks { "  pagebreak(weak: true)\n" } else { "" };
+    let brk = if s.chapter_page_breaks {
+        "  pagebreak(weak: true)\n"
+    } else {
+        ""
+    };
     let sep = esc(&s.scene_separator);
-    let title_text = esc(if s.title.trim().is_empty() { "Untitled" } else { s.title.trim() });
+    let title_text = esc(if s.title.trim().is_empty() {
+        "Untitled"
+    } else {
+        s.title.trim()
+    });
     let author = esc(s.author.trim());
 
     // Template aesthetics: separator, chapter opener, and title page design.
@@ -333,7 +402,8 @@ pub fn generate_typst(
     match s.template.as_str() {
         "classic-manuscript" => {
             doc.push_str(&format!(
-                "#let sep = align(center)[#v(1em){}#v(1em)]\n", sep
+                "#let sep = align(center)[#v(1em){}#v(1em)]\n",
+                sep
             ));
             doc.push_str(&format!(
                 "#let chapter(eyebrow, title) = {{\n{brk}  v(30%)\n  align(center)[#heading(level: 1)[#upper[#if eyebrow != none [#eyebrow: ] #title]]]\n  v(4em)\n}}\n"
@@ -374,7 +444,8 @@ pub fn generate_typst(
         }
         "plain" => {
             doc.push_str(&format!(
-                "#let sep = align(center)[#v(0.7em){}#v(0.7em)]\n", sep
+                "#let sep = align(center)[#v(0.7em){}#v(0.7em)]\n",
+                sep
             ));
             doc.push_str(&format!(
                 "#let chapter(eyebrow, title) = {{\n{brk}  v(2em)\n  heading(level: 1)[#if eyebrow != none [#eyebrow: ] #title]\n  v(1.2em)\n}}\n"
@@ -495,45 +566,78 @@ pub fn generate_markdown(
     doc
 }
 
-/// Build the manuscript into `.chronicler/build/` and return the artifact path.
-pub fn run(
+/// How long typst may run before the compile is abandoned.
+pub const TYPST_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Write the manuscript source into `.chronicler/build/`. Returns the
+/// finished artifact for markdown/typst formats, or the `.typ` source still
+/// to be rendered for PDF.
+pub fn write_source(
     root: &Path,
-    front: Vec<String>,
-    chapters: Vec<(String, Vec<String>)>,
-    back: Vec<String>,
+    front: &[String],
+    chapters: &[(String, Vec<String>)],
+    back: &[String],
     settings: &CompileSettings,
-) -> Result<PathBuf> {
+) -> Result<Build> {
     let build_dir = root.join(".chronicler").join("build");
     std::fs::create_dir_all(&build_dir).context("creating build dir")?;
-
     match settings.format.as_str() {
         "markdown" => {
             let out = build_dir.join("manuscript.md");
-            std::fs::write(&out, generate_markdown(&front, &chapters, &back, settings)).context("writing markdown")?;
-            Ok(out)
+            std::fs::write(&out, generate_markdown(front, chapters, back, settings))
+                .context("writing markdown")?;
+            Ok(Build::Done(out))
         }
         "typst" => {
             let out = build_dir.join("manuscript.typ");
-            std::fs::write(&out, generate_typst(&front, &chapters, &back, settings)).context("writing typst source")?;
-            Ok(out)
+            std::fs::write(&out, generate_typst(front, chapters, back, settings))
+                .context("writing typst source")?;
+            Ok(Build::Done(out))
         }
         _ => {
-            // pdf (default)
             let typ = build_dir.join("manuscript.typ");
-            let pdf = build_dir.join("manuscript.pdf");
-            std::fs::write(&typ, generate_typst(&front, &chapters, &back, settings)).context("writing typst source")?;
-            let output = std::process::Command::new("typst")
-                .arg("compile")
-                .arg(&typ)
-                .arg(&pdf)
-                .output()
-                .context("running typst — is it installed and on PATH?")?;
-            if !output.status.success() {
-                bail!("typst compile failed:\n{}", String::from_utf8_lossy(&output.stderr));
-            }
-            Ok(pdf)
+            std::fs::write(&typ, generate_typst(front, chapters, back, settings))
+                .context("writing typst source")?;
+            Ok(Build::NeedsPdf {
+                pdf: build_dir.join("manuscript.pdf"),
+                typ,
+            })
         }
     }
+}
+
+pub enum Build {
+    Done(PathBuf),
+    NeedsPdf { typ: PathBuf, pdf: PathBuf },
+}
+
+/// Render the typst source to PDF with the system `typst`, killing it if it
+/// runs past [`TYPST_TIMEOUT`].
+pub async fn render_pdf(typ: &Path, pdf: &Path, timeout: Duration) -> Result<()> {
+    let child = tokio::process::Command::new("typst")
+        .arg("compile")
+        .arg(typ)
+        .arg(pdf)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("running typst — is it installed and on PATH?")?;
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(r) => r.context("waiting for typst")?,
+        Err(_) => bail!(
+            "typst took longer than {}s and was stopped",
+            timeout.as_secs()
+        ),
+    };
+    if !output.status.success() {
+        bail!(
+            "typst compile failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -557,8 +661,21 @@ mod tests {
     }
 
     #[test]
+    fn typst_comments_and_markers_are_escaped() {
+        assert_eq!(convert_inline("see http://x.y now"), "see http:\\//x.y now");
+        assert_eq!(convert_inline("a /* b"), "a \\/\\* b");
+        assert_eq!(convert_inline("= not a heading"), "\\= not a heading");
+        assert_eq!(convert_inline("+ not a list"), "\\+ not a list");
+        assert_eq!(convert_inline("/ not a term"), "\\/ not a term");
+        assert_eq!(convert_inline("1984. It rained"), "1984\\. It rained");
+        assert_eq!(convert_inline("a = b - c / d"), "a = b - c / d");
+        assert_eq!(esc("= Title"), "\\= Title");
+    }
+
+    #[test]
     fn comments_never_compile() {
-        let t = md_to_typst("before <!-- note to self --> after\n\n<!-- block\nspanning\n-->\nvisible");
+        let t =
+            md_to_typst("before <!-- note to self --> after\n\n<!-- block\nspanning\n-->\nvisible");
         assert!(!t.contains("note to self"));
         assert!(!t.contains("spanning"));
         assert!(t.contains("before"));
@@ -581,12 +698,17 @@ mod tests {
     #[test]
     fn typst_document_shape() {
         let chapters = vec![
-            ("The Gate".to_string(), vec!["Scene one.".to_string(), "Scene two.".to_string()]),
+            (
+                "The Gate".to_string(),
+                vec!["Scene one.".to_string(), "Scene two.".to_string()],
+            ),
             ("".to_string(), vec!["Only scene.".to_string()]),
         ];
-        let mut settings = CompileSettings::default();
-        settings.title = "The Long Night".into();
-        settings.author = "K. Author".into();
+        let settings = CompileSettings {
+            title: "The Long Night".into(),
+            author: "K. Author".into(),
+            ..Default::default()
+        };
         let doc = generate_typst(&[], &chapters, &[], &settings);
         assert!(doc.contains("#set page(paper: \"a5\""));
         assert!(doc.contains("#chapter([Chapter 1])[The Gate]"));
@@ -605,7 +727,10 @@ mod matter_tests {
     #[test]
     fn matter_brackets_the_body() {
         let settings = CompileSettings::default();
-        let chapters = vec![("The Arrival".to_string(), vec!["Body text here.".to_string()])];
+        let chapters = vec![(
+            "The Arrival".to_string(),
+            vec!["Body text here.".to_string()],
+        )];
         let front = vec!["Copyright page.".to_string()];
         let back = vec!["Acknowledgements page.".to_string()];
         let doc = generate_typst(&front, &chapters, &back, &settings);

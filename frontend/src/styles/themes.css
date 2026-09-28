@@ -1,0 +1,307 @@
+/* Theme palettes. Every id in stores/workbench.ts THEMES needs a block here
+   ("dark" is the bare :root default). Semantic tokens derive from these in
+   tokens.css, so a palette only defines surfaces, ink and accent.
+   [data-theme-preview] lets Settings render any palette inside a swatch. */
+:root, [data-theme-preview="dark"] {
+  /* Core Palette (Zed / Modern Dark Theme inspired) */
+  --bg-color: #1a1a1a;
+  --panel-bg: #212121;
+  --header-bg: #1a1a1a;
+  --titlebar-bg: #141414;
+  
+  /* Text */
+  --text-main: #e0e0e0;
+  --text-muted: #888888;
+  --text-faint: #555555;
+  
+  /* Borders and Interactive */
+  --border-color: #333333;
+  --hover-bg: #2a2a2a;
+  --active-bg: #333333;
+  --accent: #4a90e2; /* Softer blue */
+  --accent-hover: #5ba1f3;
+  --entity: #98c379; /* Codex entity references */
+
+  /* Ink laid over the surface: light themes flip these to black-on-paper,
+     which is why no rule below selects theme ids by name. */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+  --logo-ghost: rgba(255, 255, 255, 0.05);
+  --key-bg: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-theme="midnight"], [data-theme-preview="midnight"] {
+  --bg-color: #0d1117;
+  --panel-bg: #161b22;
+  --header-bg: #0d1117;
+  --titlebar-bg: #010409;
+  --text-main: #c9d1d9;
+  --text-muted: #8b949e;
+  --text-faint: #484f58;
+  --border-color: #30363d;
+  --hover-bg: #1f242c;
+  --active-bg: #2d333b;
+  --accent: #58a6ff;
+  --accent-hover: #79b8ff;
+  --entity: #7ee787;
+}
+
+:root[data-theme="nocturne"], [data-theme-preview="nocturne"] {
+  --bg-color: #15131f;
+  --panel-bg: #1c1930;
+  --header-bg: #15131f;
+  --titlebar-bg: #100e18;
+  --text-main: #ded9f0;
+  --text-muted: #8f88ab;
+  --text-faint: #5b5473;
+  --border-color: #2e2a45;
+  --hover-bg: #262238;
+  --active-bg: #332e4d;
+  --accent: #a78bfa;
+  --accent-hover: #bda6ff;
+  --entity: #7fd1b9;
+}
+
+:root[data-theme="evergreen"], [data-theme-preview="evergreen"] {
+  --bg-color: #101812;
+  --panel-bg: #16211a;
+  --header-bg: #101812;
+  --titlebar-bg: #0b110d;
+  --text-main: #d6e2d5;
+  --text-muted: #8aa08a;
+  --text-faint: #55665a;
+  --border-color: #253328;
+  --hover-bg: #1d2a20;
+  --active-bg: #2a3b2e;
+  --accent: #5cb87f;
+  --accent-hover: #74d194;
+  --entity: #d8c06a;
+}
+
+:root[data-theme="ember"], [data-theme-preview="ember"] {
+  --bg-color: #1c1917;
+  --panel-bg: #24201d;
+  --header-bg: #1c1917;
+  --titlebar-bg: #141110;
+  --text-main: #e8ded4;
+  --text-muted: #9a8b7e;
+  --text-faint: #6a5d52;
+  --border-color: #362f29;
+  --hover-bg: #2b2622;
+  --active-bg: #3a332c;
+  --accent: #e0894a;
+  --accent-hover: #f29d5e;
+  --entity: #b5c48a;
+}
+
+/* Near-black for OLED panels and dim rooms */
+:root[data-theme="ink"], [data-theme-preview="ink"] {
+  --bg-color: #000000;
+  --panel-bg: #0a0a0a;
+  --header-bg: #000000;
+  --titlebar-bg: #000000;
+  --text-main: #f2f2f2;
+  --text-muted: #9a9a9a;
+  --text-faint: #5e5e5e;
+  --border-color: #242424;
+  --hover-bg: #161616;
+  --active-bg: #262626;
+  --accent: #7aa2f7;
+  --accent-hover: #9ab8ff;
+  --entity: #a3d977;
+}
+
+/* Leather binding: wine-dark with a rose accent */
+:root[data-theme="oxblood"], [data-theme-preview="oxblood"] {
+  --bg-color: #1a1215;
+  --panel-bg: #241a1e;
+  --header-bg: #1a1215;
+  --titlebar-bg: #130d0f;
+  --text-main: #ead9dc;
+  --text-muted: #a3868c;
+  --text-faint: #6d565c;
+  --border-color: #3a292f;
+  --hover-bg: #2a1e23;
+  --active-bg: #3b2a30;
+  --accent: #d2687b;
+  --accent-hover: #e8808f;
+  --entity: #c0a06a;
+}
+
+/* Pencil grey: no colour cast, for when a palette shouldn't have an opinion */
+:root[data-theme="graphite"], [data-theme-preview="graphite"] {
+  --bg-color: #1e2022;
+  --panel-bg: #26292c;
+  --header-bg: #1e2022;
+  --titlebar-bg: #171919;
+  --text-main: #dfe3e6;
+  --text-muted: #97a0a6;
+  --text-faint: #626b70;
+  --border-color: #343a3e;
+  --hover-bg: #2b2f33;
+  --active-bg: #383e43;
+  --accent: #6fb3d2;
+  --accent-hover: #8ac8e4;
+  --entity: #a8c58a;
+}
+
+:root[data-theme="tidepool"], [data-theme-preview="tidepool"] {
+  --bg-color: #0f1a1c;
+  --panel-bg: #152427;
+  --header-bg: #0f1a1c;
+  --titlebar-bg: #0a1214;
+  --text-main: #d3e5e6;
+  --text-muted: #85a3a6;
+  --text-faint: #55696c;
+  --border-color: #21353a;
+  --hover-bg: #1a2d30;
+  --active-bg: #263d42;
+  --accent: #46b3ad;
+  --accent-hover: #5fcfc8;
+  --entity: #c3c67a;
+}
+
+:root[data-theme="light"], [data-theme-preview="light"] {
+  --bg-color: #ffffff;
+  --panel-bg: #f6f6f6;
+  --header-bg: #f6f6f6;
+  --titlebar-bg: #ececec;
+  --text-main: #1f1f1f;
+  --text-muted: #6e6e6e;
+  --text-faint: #a8a8a8;
+  --border-color: #dcdcdc;
+  --hover-bg: #ececec;
+  --active-bg: #e0e0e0;
+  --accent: #3671c8;
+  --accent-hover: #2a5ea8;
+  --entity: #2d7d3a;
+}
+
+:root[data-theme="sepia"], [data-theme-preview="sepia"] {
+  --bg-color: #f7f1e3;
+  --panel-bg: #efe7d3;
+  --header-bg: #efe7d3;
+  --titlebar-bg: #e8dfc8;
+  --text-main: #453a28;
+  --text-muted: #8a7a5f;
+  --text-faint: #b3a385;
+  --border-color: #d8cbaa;
+  --hover-bg: #ede2c8;
+  --active-bg: #e2d4b4;
+  --accent: #a5673f;
+  --accent-hover: #8e5533;
+  --entity: #5a7d35;
+}
+
+/* Warmer and softer than Sepia: old paper rather than a photograph of it */
+:root[data-theme="parchment"], [data-theme-preview="parchment"] {
+  --bg-color: #fbf6ea;
+  --panel-bg: #f3ecdb;
+  --header-bg: #f3ecdb;
+  --titlebar-bg: #ebe2cd;
+  --text-main: #3b352a;
+  --text-muted: #6f6555;
+  --text-faint: #b0a68f;
+  --border-color: #e0d5bd;
+  --hover-bg: #f1e9d6;
+  --active-bg: #e7dcc4;
+  --accent: #8c6a3f;
+  --accent-hover: #755733;
+  --entity: #5d7a43;
+}
+
+:root[data-theme="linen"], [data-theme-preview="linen"] {
+  --bg-color: #f7f7f5;
+  --panel-bg: #eeeeea;
+  --header-bg: #eeeeea;
+  --titlebar-bg: #e5e5e0;
+  --text-main: #262622;
+  --text-muted: #6b6b63;
+  --text-faint: #a3a39a;
+  --border-color: #dcdcd4;
+  --hover-bg: #e7e7e1;
+  --active-bg: #dcdcd2;
+  --accent: #4a6fa5;
+  --accent-hover: #3a5b8c;
+  --entity: #3f7a4a;
+}
+
+:root[data-theme="mist"], [data-theme-preview="mist"] {
+  --bg-color: #f3f7f8;
+  --panel-bg: #e8eff1;
+  --header-bg: #e8eff1;
+  --titlebar-bg: #dfe8eb;
+  --text-main: #1f2c30;
+  --text-muted: #556a71;
+  --text-faint: #9db0b5;
+  --border-color: #d2e0e3;
+  --hover-bg: #e0ebee;
+  --active-bg: #d3e2e6;
+  --accent: #2a707e;
+  --accent-hover: #1f5c68;
+  --entity: #4a7d3f;
+}
+
+/* Calfskin: creamier than Parchment, with slate ink instead of brown */
+:root[data-theme="vellum"], [data-theme-preview="vellum"] {
+  --bg-color: #fdfaf3;
+  --panel-bg: #f6f1e6;
+  --header-bg: #f6f1e6;
+  --titlebar-bg: #efe9da;
+  --text-main: #33302a;
+  --text-muted: #675f52;
+  --text-faint: #a9a394;
+  --border-color: #e4ddcd;
+  --hover-bg: #f2ece0;
+  --active-bg: #eae3d2;
+  --accent: #4f6484;
+  --accent-hover: #3e5069;
+  --entity: #4c7a4a;
+}
+
+:root[data-theme="fog"], [data-theme-preview="fog"] {
+  --bg-color: #f4f5f7;
+  --panel-bg: #e9ebee;
+  --header-bg: #e9ebee;
+  --titlebar-bg: #e0e3e7;
+  --text-main: #23272b;
+  --text-muted: #5e6873;
+  --text-faint: #9aa3ad;
+  --border-color: #d6dae0;
+  --hover-bg: #e2e5ea;
+  --active-bg: #d5d9e0;
+  --accent: #4b6584;
+  --accent-hover: #3a5169;
+  --entity: #3f7a55;
+}
+
+:root[data-theme="blossom"], [data-theme-preview="blossom"] {
+  --bg-color: #fdf6f6;
+  --panel-bg: #f7ebec;
+  --header-bg: #f7ebec;
+  --titlebar-bg: #f0e2e3;
+  --text-main: #3a2c2e;
+  --text-muted: #74595d;
+  --text-faint: #b39ca0;
+  --border-color: #e8d5d7;
+  --hover-bg: #f4e6e7;
+  --active-bg: #ecdadc;
+  --accent: #a8546a;
+  --accent-hover: #8e4257;
+  --entity: #4f6b3f;
+}
+
+/* Every light theme flips the ink; adding one means adding it here too */
+:root[data-theme="light"], [data-theme-preview="light"],
+:root[data-theme="sepia"], [data-theme-preview="sepia"],
+:root[data-theme="parchment"], [data-theme-preview="parchment"],
+:root[data-theme="linen"], [data-theme-preview="linen"],
+:root[data-theme="mist"], [data-theme-preview="mist"],
+:root[data-theme="vellum"], [data-theme-preview="vellum"],
+:root[data-theme="fog"], [data-theme-preview="fog"],
+:root[data-theme="blossom"], [data-theme-preview="blossom"] {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  --logo-ghost: rgba(0, 0, 0, 0.07);
+  --key-bg: rgba(0, 0, 0, 0.06);
+}

@@ -1,0 +1,47 @@
+.binder-view { display: flex; flex-direction: column; height: 100%; }
+.binder-header { display: flex; align-items: center; gap: 2px; padding: var(--sp-2) var(--sp-2) var(--sp-1) var(--sp-3); }
+/* The project title keeps its own capitalisation — a book called
+   "The Necromancer and the Paladin" shouldn't shout. */
+.binder-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-prose);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.binder-list { flex: 1; overflow-y: auto; padding: var(--sp-1) 0 var(--sp-5); }
+.binder-hint { padding: var(--sp-1) var(--sp-3); }
+
+.binder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 var(--sp-2) 1px;
+  padding-right: var(--sp-2);
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.binder-row:hover { background: var(--hover-bg); color: var(--text-main); }
+.binder-row.active { background: var(--active-bg); color: var(--text-main); }
+.binder-row.folder { font-weight: 600; color: var(--text-main); }
+.binder-row[data-drop="before"] { box-shadow: inset 0 2px 0 var(--accent); }
+.binder-row[data-drop="after"] { box-shadow: inset 0 -2px 0 var(--accent); }
+.binder-row[data-drop="into"] { background: var(--info-soft); }
+
+.binder-icon { flex-shrink: 0; color: var(--text-faint); }
+.binder-row.active .binder-icon { color: var(--text-muted); }
+.binder-chevron { flex-shrink: 0; color: var(--text-faint); transition: transform var(--dur-fast) var(--ease); }
+.binder-chevron.open { transform: rotate(90deg); }
+.binder-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.binder-words { font-size: 10.5px; font-weight: 400; color: var(--text-faint); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity var(--dur-fast); }
+.binder-view:hover .binder-words { opacity: 1; }
+.binder-input { height: 24px; font-size: var(--fs-sm); }
+.binder-creating { cursor: default; }
+.binder-creating:hover { background: none; }

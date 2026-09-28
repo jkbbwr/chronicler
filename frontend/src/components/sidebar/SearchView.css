@@ -1,0 +1,11 @@
+.search-view { display: flex; flex-direction: column; height: 100%; }
+.search-fields { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-3); }
+.search-row { display: flex; align-items: center; gap: var(--sp-1); }
+.search-results { flex: 1; overflow-y: auto; padding-bottom: var(--sp-4); }
+.search-note { padding: var(--sp-1) var(--sp-3); }
+.search-group { margin-bottom: var(--sp-1); }
+.search-scene { text-transform: none; letter-spacing: 0; font-size: var(--fs-sm); color: var(--text-main); }
+.search-chapter { overflow: hidden; text-transform: none; letter-spacing: 0; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
+.search-hit { margin: 0 var(--sp-2); font-size: var(--fs-sm); }
+.search-text { flex: 1; min-width: 0; overflow: hidden; font-family: var(--font-prose); font-size: 13.5px; white-space: nowrap; text-overflow: ellipsis; }
+.search-text mark { color: var(--text-main); background: var(--warning-soft); border-radius: 2px; }
