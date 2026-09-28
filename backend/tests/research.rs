@@ -196,6 +196,10 @@ fn research_is_never_manuscript() {
 fn research_changes_reach_the_frontend_but_not_the_indexer() {
     let dir = temp_dir("research-watch");
     write(&dir, "ch1.md", PROSE.as_bytes());
+    // The folder exists first: Linux only watches a new folder a moment
+    // after it appears, so a file written straight into it goes unseen
+    // (the app still hears about the folder itself).
+    std::fs::create_dir_all(dir.join("Research")).unwrap();
     let mut b = Backend::spawn(&dir);
     b.ok("diag/check", json!({})); // engine warm
     write(&dir, "Research/Scratch.md", RESEARCH_TEXT.as_bytes());

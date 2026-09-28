@@ -1,0 +1,143 @@
+name: Build
+
+# Tests on every push and pull request; macOS and Linux app builds after
+# them. Pushing a tag like v0.2.0 also attaches the builds to a GitHub
+# release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # History is built and tested against this jj; the app itself uses
+  # whatever jj the user has installed.
+  JJ_VERSION: 0.41.0
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - uses: oven-sh/setup-bun@v2
+
+      # The history and compile tests run the real jj and typst.
+      - name: Install jj
+        run: |
+          curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin ./jj
+          jj --version
+
+      - uses: typst-community/setup-typst@v4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Clippy
+        run: cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Backend tests
+        run: cargo test --manifest-path backend/Cargo.toml --locked
+
+      - name: Typecheck
+        working-directory: frontend
+        run: bunx tsc --noEmit -p .
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: bun test tests/
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            runs-on: macos-latest
+            platform: --mac
+            arch: --arm64
+            artifacts: |
+              frontend/release/*.dmg
+              frontend/release/*.zip
+          - name: linux-x64
+            runs-on: ubuntu-24.04
+            platform: --linux
+            arch: --x64
+            artifacts: |
+              frontend/release/*.AppImage
+              frontend/release/*.deb
+              frontend/release/*.tar.gz
+          - name: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            platform: --linux
+            arch: --arm64
+            artifacts: |
+              frontend/release/*.AppImage
+              frontend/release/*.deb
+              frontend/release/*.tar.gz
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          key: ${{ matrix.name }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build backend
+        run: cargo build --manifest-path backend/Cargo.toml --release --locked
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and package
+        working-directory: frontend
+        run: |
+          bun run build
+          bunx electron-builder ${{ matrix.platform }} ${{ matrix.arch }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chronicler-${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
