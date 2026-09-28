@@ -58,7 +58,7 @@ jobs:
 
       - name: Typecheck
         working-directory: frontend
-        run: bunx tsc --noEmit -p .
+        run: bunx tsc -b
 
       - name: Frontend tests
         working-directory: frontend

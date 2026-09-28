@@ -1,4 +1,4 @@
-import { type Component, type JSX, For, onCleanup, onMount, Show, splitProps } from "solid-js";
+import { type Component, type JSX, createEffect, For, onCleanup, onMount, Show, splitProps } from "solid-js";
 import { Portal } from "solid-js/web";
 import { X } from "lucide-solid";
 
@@ -73,8 +73,14 @@ export function Segmented<T extends string>(props: {
 }
 
 export function Tabs<T extends string>(props: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+  let row!: HTMLDivElement;
+  // A narrow panel scrolls its tabs sideways; keep the chosen one in view.
+  createEffect(() => {
+    const i = props.options.findIndex((o) => o.value === props.value);
+    (row.children[i] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
   return (
-    <div class="tabs" role="tablist">
+    <div class="tabs" role="tablist" ref={row}>
       <For each={props.options}>
         {(o) => (
           <button type="button" role="tab" aria-selected={props.value === o.value} class={props.value === o.value ? "active" : ""} onClick={() => props.onChange(o.value)}>

@@ -1,4 +1,4 @@
-import { type Component, createSignal, For, Show } from "solid-js";
+import { type Component, createEffect, createSignal, For, Show } from "solid-js";
 import { Button, Modal } from "../ui";
 import { invalidate, invoke } from "../../lib/rpc";
 import { chapterOf, flush, isOpen, replaceContent, sceneName } from "../../stores/documents";
@@ -109,7 +109,7 @@ export const RenameModal: Component<RenameModalProps> = (props) => {
                     type="checkbox"
                     checked={picked() === keys.length}
                     onChange={(e) => toggle(keys, e.currentTarget.checked)}
-                    prop:indeterminate={picked() > 0 && picked() < keys.length}
+                    ref={(el) => createEffect(() => { el.indeterminate = picked() > 0 && picked() < keys.length; })}
                   />
                   <span class="rename-scene-name">{sceneName(scene.path)}</span>
                   <span class="hint">{chapterOf(scene.path)}</span>

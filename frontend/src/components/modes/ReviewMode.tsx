@@ -126,7 +126,7 @@ const openFromReport = (e: MouseEvent) => {
 };
 
 export const ReviewMode: Component = () => {
-  const [queueWidth, setQueueWidth] = createSignal(300);
+  const [queueWidth, setQueueWidth] = createSignal(340);
 
   onMount(() => {
     // J/K walk the queue when focus isn't in the text.
