@@ -23,6 +23,7 @@ pub mod rpc;
 pub mod server;
 pub mod stats;
 pub mod story;
+pub mod tools;
 pub mod tts;
 
 pub use app::App;

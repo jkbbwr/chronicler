@@ -614,7 +614,7 @@ pub enum Build {
 /// Render the typst source to PDF with the system `typst`, killing it if it
 /// runs past [`TYPST_TIMEOUT`].
 pub async fn render_pdf(typ: &Path, pdf: &Path, timeout: Duration) -> Result<()> {
-    let child = tokio::process::Command::new("typst")
+    let child = tokio::process::Command::new(crate::tools::program(crate::tools::Tool::Typst))
         .arg("compile")
         .arg(typ)
         .arg(pdf)
@@ -623,7 +623,7 @@ pub async fn render_pdf(typ: &Path, pdf: &Path, timeout: Duration) -> Result<()>
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .context("running typst — is it installed and on PATH?")?;
+        .context("running typst — is it installed? (Settings → Programs can point at it)")?;
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(r) => r.context("waiting for typst")?,
         Err(_) => bail!(

@@ -1190,9 +1190,16 @@ what: string,
  */
 scenes: Array<string>, };
 
+export type Tool = "jj" | "typst";
+
 /**
- * Outside programs Chronicler relies on, with their versions; `None` when
- * not installed (or not on PATH).
+ * Point Chronicler at a program ("" = look on PATH again).
+ */
+export type ToolPathParams = { tool: Tool, path: string, };
+
+/**
+ * Outside programs Chronicler relies on, with their versions (`None`
+ * when they can't be run) and where the writer said they are ("" = PATH).
  */
 export type Tools = { 
 /**
@@ -1202,7 +1209,7 @@ jj?: string,
 /**
  * typst — compiling the manuscript.
  */
-typst?: string, };
+typst?: string, jjPath: string, typstPath: string, };
 
 /**
  * Partial update: omitted fields keep their values. Changing the model
@@ -1250,6 +1257,7 @@ export interface Rpc {
   "ping": { params: NoParams; result: string };
   "system/info": { params: NoParams; result: SystemInfo };
   "system/tools": { params: NoParams; result: Tools };
+  "system/tools_set": { params: ToolPathParams; result: Tools };
   "db/get": { params: SettingGetParams; result: SettingValue };
   "db/set": { params: SettingSetParams; result: null };
   "stats/get": { params: StatsParams; result: ProjectStats };

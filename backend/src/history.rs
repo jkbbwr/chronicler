@@ -60,7 +60,7 @@ impl Repo {
 /// Run jj in the project root with a fixed identity and no user config.
 fn run_jj_bytes(root: &Path, lock: &Mutex<()>, args: &[&str]) -> AnyResult<Vec<u8>> {
     let _guard = lock.lock();
-    let out = std::process::Command::new("jj")
+    let out = std::process::Command::new(crate::tools::program(crate::tools::Tool::Jj))
         .current_dir(root)
         .env("JJ_CONFIG", "/dev/null")
         .args(["--no-pager", "--color=never"])

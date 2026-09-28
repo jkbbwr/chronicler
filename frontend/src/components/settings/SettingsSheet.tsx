@@ -6,12 +6,13 @@ import { overlays, setOverlays } from "../../stores/app";
 import { AppearanceSection, BookSection, GoalsSection, ShortcutsSection, SpellingSection, WritingSection } from "./sections";
 import { AiSection } from "./AiSection";
 import { VoiceSection } from "./VoiceSection";
+import { ProgramsSection } from "./ProgramsSection";
 import "./settings.css";
 
 // Settings as a two-pane sheet. Every section says whether it applies to
 // every book or only the one that's open.
 
-export type SettingsSection = "writing" | "appearance" | "spelling" | "goals" | "book" | "ai" | "readaloud" | "shortcuts";
+export type SettingsSection = "writing" | "appearance" | "spelling" | "goals" | "book" | "ai" | "readaloud" | "programs" | "shortcuts";
 
 const SECTIONS: { id: SettingsSection; label: string; scope: "all" | "book" | null; component: Component }[] = [
   { id: "writing", label: "Writing", scope: "all", component: WritingSection },
@@ -21,6 +22,7 @@ const SECTIONS: { id: SettingsSection; label: string; scope: "all" | "book" | nu
   { id: "spelling", label: "Spelling & grammar", scope: "book", component: SpellingSection },
   { id: "ai", label: "AI", scope: "all", component: AiSection },
   { id: "readaloud", label: "Read aloud", scope: "all", component: VoiceSection },
+  { id: "programs", label: "Programs", scope: "all", component: ProgramsSection },
   { id: "shortcuts", label: "Shortcuts", scope: null, component: ShortcutsSection },
 ];
 

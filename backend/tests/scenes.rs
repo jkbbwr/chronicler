@@ -127,3 +127,22 @@ fn split_then_merge_round_trips() {
     b.shutdown();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn programs_can_be_pointed_at() {
+    let dir = temp_dir("programs");
+    let mut b = Backend::spawn(&dir);
+    let on_path = b.ok("system/tools", Value::Null)["jj"].clone();
+    // A wrong location: not found, and remembered.
+    let t = b.ok("system/tools_set", json!({ "tool": "jj", "path": " /nowhere/jj " }));
+    assert_eq!((t["jj"].clone(), t["jjPath"].clone()), (Value::Null, json!("/nowhere/jj")));
+    assert_eq!(b.ok("system/tools", Value::Null)["jjPath"], "/nowhere/jj");
+    // History says so plainly instead of pretending there's nothing.
+    b.ok("document/save", json!({ "path": "a.md", "content": "One.\n" }));
+    assert!(b.call("history/lock_in", json!({ "message": "x" }))["error"].is_object());
+    // Back to PATH.
+    let t = b.ok("system/tools_set", json!({ "tool": "jj", "path": "" }));
+    assert_eq!((t["jj"].clone(), t["jjPath"].clone()), (on_path, json!("")));
+    b.shutdown();
+    std::fs::remove_dir_all(&dir).ok();
+}

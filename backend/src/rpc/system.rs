@@ -24,27 +24,44 @@ pub fn info(app: &App, _: NoParams) -> Result<SystemInfo> {
     })
 }
 
-/// Outside programs Chronicler relies on, with their versions; `None` when
-/// not installed (or not on PATH).
+/// Outside programs Chronicler relies on, with their versions (`None`
+/// when they can't be run) and where the writer said they are ("" = PATH).
 #[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
 pub struct Tools {
     /// jj — version history.
     pub jj: Option<String>,
     /// typst — compiling the manuscript.
     pub typst: Option<String>,
-}
-
-fn version_of(program: &str) -> Option<String> {
-    let out = std::process::Command::new(program).arg("--version").output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // "jj 0.41.0-413f…" / "typst 0.14.0 (b33de9de)" → "0.41.0" / "0.14.0"
-    let v = text.split_whitespace().nth(1)?;
-    out.status.success().then(|| v.split('-').next().unwrap_or(v).to_string())
+    pub jj_path: String,
+    pub typst_path: String,
 }
 
 pub fn tools(_: &App, _: NoParams) -> Result<Tools> {
-    Ok(Tools { jj: version_of("jj"), typst: version_of("typst") })
+    use crate::tools::{Tool, paths, version};
+    let p = paths();
+    Ok(Tools { jj: version(Tool::Jj), typst: version(Tool::Typst), jj_path: p.jj, typst_path: p.typst })
+}
+
+/// Point Chronicler at a program ("" = look on PATH again).
+#[derive(Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPathParams {
+    pub tool: crate::tools::Tool,
+    pub path: String,
+}
+
+pub fn tools_set(app: &App, p: ToolPathParams) -> Result<Tools> {
+    use crate::tools::{Tool, paths, set_paths};
+    let mut all = paths();
+    let path = p.path.trim().to_string();
+    match p.tool {
+        Tool::Jj => all.jj = path,
+        Tool::Typst => all.typst = path,
+    }
+    set_paths(all)?;
+    tools(app, NoParams::default())
 }
 
 #[derive(Deserialize, TS)]

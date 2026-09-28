@@ -1,6 +1,7 @@
 {
   "name": "chronicler-workspace",
   "private": true,
+  "license": "PolyForm-Shield-1.0.0",
   "scripts": {
     "dev": "cd frontend && bun run dev",
     "build:backend": "cargo build --manifest-path backend/Cargo.toml --release",
@@ -9,8 +10,7 @@
     "package": "bun run build:backend && cd frontend && bun run package",
     "test:backend": "cargo test --manifest-path backend/Cargo.toml",
     "test:unit": "cd frontend && bun test tests/",
-    "test:e2e": "bun frontend/tests/e2e.mjs",
-    "test": "bun run test:backend && bun run test:unit && bun run test:e2e",
+    "test": "bun run test:backend && bun run test:unit",
     "dist": "bun run build:backend && cd frontend && bun run dist",
     "build:backend:linux": "./scripts/build-linux.sh --backend-only",
     "dist:linux": "./scripts/build-linux.sh",

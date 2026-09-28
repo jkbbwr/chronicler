@@ -160,6 +160,7 @@ methods! {
     "ping" => sync system::ping: (NoParams) -> String;
     "system/info" => sync system::info: (NoParams) -> system::SystemInfo;
     "system/tools" => sync system::tools: (NoParams) -> system::Tools;
+    "system/tools_set" => sync system::tools_set: (system::ToolPathParams) -> system::Tools;
     "db/get" => sync system::setting_get: (system::SettingGetParams) -> system::SettingValue;
     "db/set" => sync system::setting_set: (system::SettingSetParams) -> ();
     "stats/get" => sync system::stats: (system::StatsParams) -> crate::stats::ProjectStats;

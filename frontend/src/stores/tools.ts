@@ -3,9 +3,10 @@ import { invoke } from "../lib/rpc";
 import type { Tools } from "../rpc.gen";
 
 // Outside programs Chronicler needs: jj (history) and typst (compiling).
-// Checked once; "Check again" after installing.
+// Checked once; "Check again" after installing. Settings → Programs can
+// point at either when it isn't on PATH.
 
-export const [tools, { refetch: recheckTools }] = createRoot(() =>
+export const [tools, { refetch: recheckTools, mutate: setTools }] = createRoot(() =>
   createResource<Tools | null>(async () => {
     try {
       return await invoke("system/tools");
