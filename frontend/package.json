@@ -4,7 +4,7 @@
   "desktopName": "chronicler",
   "private": true,
   "license": "PolyForm-Shield-1.0.0",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -20,6 +20,10 @@
     "productName": "Chronicler",
     "electronVersion": "43.4.1",
     "executableName": "chronicler",
+    "electronLanguages": [
+      "en",
+      "en-GB"
+    ],
     "directories": {
       "output": "release"
     },

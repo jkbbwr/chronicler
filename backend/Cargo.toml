@@ -1,6 +1,6 @@
 [package]
 name = "chronicler-backend"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "PolyForm-Shield-1.0.0"
 default-run = "chronicler-backend"
@@ -48,3 +48,10 @@ dom_smoothie = "0.18"
 # these crates optimized even in dev builds so engine warm-up stays fast.
 [profile.dev.package.harper-core]
 opt-level = 3
+
+# Releases are rare, so spend the build time: whole-program optimisation,
+# one codegen unit, no debug symbols.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
